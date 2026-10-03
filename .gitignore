@@ -1,0 +1,27 @@
+# ===== Modele głosu — NIE w repo (za duże dla GitHuba) =====
+# Modele wgrywane są z zakładki Assets w Release v1.0.0.
+# Instrukcja: patrz README.md → "Instalacja".
+
+# Model neuronowy (60 MB)
+*.onnx
+*.onnx.json
+
+# Runtime WASM Sherpa (11 MB) + jego dane (92 MB)
+sherpa/sherpa-onnx-wasm-main-tts.wasm
+sherpa/sherpa-onnx-wasm-main-tts.data
+
+# Katalog modelu Piper (zawiera .onnx, .onnx.json, espeak-ng-data, tokens.txt)
+sherpa/vits-piper-pl_PL-meski_wg_glos-medium/
+
+# Katalog głosów świata (~0,5 MB, generowany/skądś pobierany)
+sherpa/merged_models.json
+
+# ===== Kopie zapasowe =====
+*.bak
+*.bak-*
+*.orig
+*.old
+
+# Python
+__pycache__/
+*.pyc

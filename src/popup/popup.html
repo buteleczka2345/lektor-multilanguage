@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polski Lektor</title>
+    <style>
+        body { color:#f1f1f1; background-color:#0a0a0a; width:300px; margin:0; padding:0;
+            font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+        .header { background:linear-gradient(#141414 0%,#0a0a0a 100%); border-bottom:1px solid rgba(0,247,255,.25);
+            display:flex; align-items:center; gap:8px; padding:9px 12px; }
+        .header .bolt { color:#00f7ff; font-size:18px; line-height:1; text-shadow:0 0 10px rgba(0,247,255,.6); }
+        .header h1 { color:#00f7ff; margin:0; font-size:13px; font-weight:600; letter-spacing:.3px; }
+        .header .sub { color:#888; font-size:9px; margin-top:1px; }
+        .control-panel { padding:10px 12px 12px; }
+        .control-group { background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.09);
+            border-radius:9px; margin-bottom:8px; padding:9px 10px; }
+        .switch-group { display:flex; justify-content:space-between; align-items:center; }
+        .switch-label { display:flex; flex-direction:column; }
+        .label-title { font-size:12px; font-weight:600; }
+        .label-desc { color:#aaa; margin-top:2px; font-size:10px; line-height:1.4; }
+        .switch { width:40px; height:22px; display:inline-block; position:relative; flex-shrink:0; margin-left:12px; }
+        .switch input { opacity:0; width:0; height:0; }
+        .slider { cursor:pointer; background-color:#444; transition:all .3s; position:absolute; inset:0; }
+        .slider:before { content:""; background-color:#fff; width:16px; height:16px; transition:all .3s;
+            position:absolute; bottom:3px; left:3px; }
+        input:checked + .slider { background-color:#00c9d4; }
+        input:checked + .slider:before { transform:translate(18px); }
+        .slider.round { border-radius:22px; }
+        .slider.round:before { border-radius:50%; }
+        .slider-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+        .slider-header .label-title { font-size:11px; }
+        .slider-val { color:#00f7ff; background:rgba(0,247,255,.12); border-radius:12px;
+            padding:1px 6px; font-size:10px; font-weight:700; }
+        input[type="range"] { -webkit-appearance:none; background:transparent; width:100%; height:6px; margin:0; }
+        input[type="range"]::-webkit-slider-runnable-track { cursor:pointer; background:#444;
+            border-radius:2px; width:100%; height:6px; }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; cursor:pointer; background:#00f7ff;
+            border-radius:50%; width:16px; height:16px; margin-top:-6px; box-shadow:0 0 10px rgba(0,247,255,.6); }
+        .field-label { display:block; font-size:10px; color:#ccc; margin-bottom:4px; }
+        select { color:#fff; appearance:none; -webkit-appearance:none; cursor:pointer;
+            background-color:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.18);
+            border-radius:7px; outline:none; width:100%; padding:8px 10px; font-size:12px; }
+        select option { color:#fff; background-color:#161616; }
+        .footnote { font-size:9px; color:#888; text-align:center; margin-top:3px; }
+        .hidden { display:none; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <span class="bolt">🔊</span>
+        <div>
+            <h1>Polski Lektor</h1>
+            <div class="sub">Czyta napisy jako lektor</div>
+        </div>
+    </div>
+
+    <div class="control-panel">
+        <div class="control-group switch-group">
+            <div class="switch-label">
+                <span class="label-title">Lektor</span>
+                <span class="label-desc">Włącz / wyłącz czytanie napisów</span>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="enableToggle" checked>
+                <span class="slider round"></span>
+            </label>
+        </div>
+
+                <div class="control-group">
+            <label class="field-label">Silnik TTS</label>
+            <div class="label-desc" style="color:#7effa0;font-size:11px;margin-top:2px;">Offline (Sherpa VITS — wbudowany głos) — jedyny silnik</div>
+            <div class="footnote">Działa bez internetu i bez wgrywania plików.</div>
+        </div>
+
+        <div class="control-group">
+            <label class="field-label" for="offlineVoiceSelect">Głos lektora (Sherpa VITS)</label>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <select id="offlineVoiceSelect" style="flex:1;min-width:0;">
+                    <option value="pl_PL-meski_wg_glos-medium">Męski — Sherpa VITS (PL)</option>
+                </select>
+                <button id="builtinVoiceDeleteBtn" title="Wyłącz wbudowany głos męski (bez kopiowania)" style="width:28px;height:24px;background:#331111;color:#ff9090;border:1px solid #933;cursor:pointer;border-radius:6px;font-size:11px;flex-shrink:0;">🗑</button>
+            </div>
+            <button id="builtinVoiceRestoreBtn" style="display:none;width:100%;height:22px;background:#0f2d1a;color:#7effa0;border:1px solid #3a7a3a;font:11px Arial;cursor:pointer;border-radius:6px;margin-top:6px;">↺ Przywróć wbudowany głos męski</button>
+            <button id="builtinVoiceMigrateBtn" style="width:100%;height:22px;background:#0d2436;color:#7ec8ff;border:1px solid #2a5a8a;font:11px Arial;cursor:pointer;border-radius:6px;margin-top:6px;">⤵ Przenieś wbudowany głos męski na listę głosów (bez pobierania)</button>
+            <div class="footnote" id="voiceOfflineFootnote">Jedyny głos w paczce — oryginalny, wbudowany model Sherpa-onnx (VITS). Nie ma innych głosów do wyboru.</div>
+            <div class="footnote" id="builtinVoiceStatus" style="color:#ffcf70;display:none;">—</div>
+            <div class="footnote" id="builtinVoiceHint" style="display:none;color:#9fd0ff;">🛈 Głos męski przeniesiony na listę „Własne głosy” (poniżej): tam masz ▶ aktywuj i 🗑 skasuj. Skasowanie usuwa kopię z pamięci rozszerzenia, a wróci jednym kliknięciem. Plik 60 MB w paczce (awaryjny) zwolnisz tylko ręcznie — skasuj na dysku:<br><code id="builtinVoicePath" style="word-break:break-all;color:#ffd479;">—</code><br><button id="builtinVoicePathBtn" style="margin-top:4px;background:#112a33;color:#7ee0ff;border:1px solid #2a6a7a;border-radius:6px;font:11px Arial;cursor:pointer;padding:3px 8px;">📋 Kopiuj ścieżkę</button></div>
+        </div>
+
+        <div class="control-group">
+            <label class="field-label">Własny głos (Sherpa/Piper z plików)</label>
+            <input type="file" id="customVoiceInput" accept=".onnx,.txt,.json" multiple webkitdirectory style="display:none;">
+            <div id="customVoiceList" style="margin-top:6px;"></div>
+            <button id="customVoiceBtn" style="width:100%;height:26px;background:#112a33;color:#7ee0ff;border:1px solid #2a6a7a;font:11px Arial;cursor:pointer;border-radius:6px;">📂 Wskaż pliki własnego głosu (onnx + txt + json)</button>
+            <button id="customVoiceDisable" style="width:100%;height:22px;background:#331111;color:#ff9090;border:1px solid #933;font:11px Arial;cursor:pointer;border-radius:6px;margin-top:6px;display:none;">✕ Wróć do wbudowanego głosu</button>
+            <div class="footnote" id="customVoiceStatus" style="color:#ffcf70;">—</div>
+            <div class="footnote" id="customVoiceDetail">Wskaż 3 pliki modelu Sherpa/Piper: model.onnx + tokens.txt + model.onnx.json (json opcjonalny). Głos zapisze się w rozszerzeniu i przeżyje restart przeglądarki.</div>
+        </div>
+
+        <div class="control-group">
+            <label class="field-label">🤬 Cenzura przekleństw — wszystkie języki</label>
+            <button id="censorToggleBtn" style="width:100%;height:24px;background:#0f2d1a;color:#7effa0;border:1px solid #3a7a3a;font:11px Arial;cursor:pointer;border-radius:6px;">🤬 Cenzura: WŁĄCZONA</button>
+            <select id="censorModeSelect" style="width:100%;margin-top:6px;font-size:11px;padding:6px 8px;">
+                <option value="remove">Usuń słowo (cicho) — zalecane</option>
+                <option value="beep">[BEEP] (obcy głos wypowie na głos)</option>
+                <option value="replace">Gwiazdki (k****)</option>
+            </select>
+            <input type="text" id="censorCustomWords" placeholder="Własne słowa po przecinku (każdy język)…" style="width:100%;box-sizing:border-box;margin-top:6px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.18);border-radius:7px;color:#fff;padding:6px 8px;font-size:11px;outline:none;">
+            <div class="footnote" id="censorStatus" style="color:#ffcf70;">—</div>
+            <div class="footnote" id="censorScopeNote">Działa dla WSZYSTKICH języków naraz (własne słowa + wbudowane listy). Ustawienia zapisują się na stałe.</div>
+        </div>
+
+        <div class="control-group">
+            <label class="field-label">🌐 Języki świata — pobieranie głosów</label>
+            <input type="text" id="langSearch" placeholder="Szukaj języka (np. niemiecki, arabski, EN)…" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.18);border-radius:7px;color:#fff;padding:7px 9px;font-size:11px;outline:none;">
+            <div style="display:flex;gap:6px;margin-top:6px;">
+                <select id="langRegionFilter" style="flex:1;font-size:11px;padding:6px 8px;">
+                    <option value="all">Wszystkie regiony</option>
+                </select>
+                <select id="langTypeFilter" style="flex:1;font-size:11px;padding:6px 8px;">
+                    <option value="all">Wszystkie dostępne</option>
+                    <option value="mms">Tylko MMS (~1100 jęz.)</option>
+                    <option value="piper">Tylko Piper</option>
+                    <option value="coqui">Tylko Coqui (jakość!)</option>
+                </select>
+            </div>
+            <div class="footnote" id="langStoreStatus" style="color:#ffcf70;">Ładuję katalog modeli…</div>
+            <div id="langStoreList" style="margin-top:4px;max-height:230px;overflow-y:auto;border:1px solid rgba(255,255,255,.09);border-radius:7px;padding:4px 6px;"></div>
+            <div class="footnote">Model MMS ≈ 114 MB na język. Pobrany głos trafia na listę „Własny głos” i staje się aktywny. Źródło: HuggingFace (MMS: Meta, lic. CC-BY-NC; Piper: lic. MIT).</div>
+        </div>
+
+        <div class="control-group">
+            <label class="field-label" for="primeSourceSelect">Napisy na Prime Video</label>
+            <select id="primeSourceSelect">
+                <option value="both">Wbudowane + Immersive Translate</option>
+                <option value="immersive">Tylko Immersive Translate</option>
+                <option value="native">Tylko wbudowane</option>
+            </select>
+            <div class="footnote">iQIYI: zawsze czyta napisy przez Immersive Translate (PL).</div>
+        </div>
+
+        <div class="control-group">
+            <div class="slider-header">
+                <span class="label-title">Nagrywanie / zapas do przodu</span>
+                <span class="slider-val" id="lookaheadVal">na bieżąco</span>
+            </div>
+            <input type="range" id="lookaheadRange" min="0" max="120" step="1" value="3">
+            <div class="footnote" id="recDetail">0 = na bieżąco (bez nagrywania) · przesuń w prawo, aby nagrywać czysty lektor z zapasem N minut do przodu. Powrót na 0 kończy nagrywanie — nagranie zostaje w buforze, zapiszesz je przyciskiem ⬇ na stronie.</div>
+            <div class="footnote" id="recTelemetry" style="color:#7effa0;">—</div>
+            <div class="footnote" id="recLog" style="text-align:left;max-height:78px;overflow-y:auto;line-height:1.5;">—</div>
+        </div>
+
+        <div class="control-group">
+            <div class="slider-header">
+                <span class="label-title">Prędkość lektora</span>
+                <span class="slider-val" id="speedVal">1.0x</span>
+            </div>
+            <input type="range" id="speedRange" min="0.5" max="3.0" step="0.1" value="1.0">
+        </div>
+        <div class="control-group">
+            <div class="slider-header">
+                <span class="label-title">Ducking (wyciszanie filmu)</span>
+                <span class="slider-val" id="duckVal">20%</span>
+            </div>
+            <input type="range" id="duckRange" min="0" max="100" step="5" value="20">
+            <div class="footnote">0 = całkowite wyciszenie · 100 = bez zmian</div>
+        </div>
+
+        <div class="control-group">
+            <div class="slider-header">
+                <span class="label-title">Głośność lektora</span>
+                <span class="slider-val" id="volumeVal">100%</span>
+            </div>
+            <input type="range" id="volumeRange" min="0" max="400" step="5" value="100">
+            <div class="footnote">Głośność samego lektora (niezależna od filmu). Powyżej 100% — wzmocnienie do 400% bez zniekształceń (limiter).</div>
+        </div>
+
+        <div class="control-group">
+            <div class="slider-header">
+                <span class="label-title">Napisy z pliku</span>
+                <span class="slider-val" id="fileSubsStatus">brak</span>
+            </div>
+            <input type="file" id="fileSubsInput" accept=".srt,.vtt,.sbv,.ass,.ssa,.txt" style="display:none;">
+            <button id="fileSubsBtn" style="width:100%;height:26px;background:#112a33;color:#7ee0ff;border:1px solid #2a6a7a;font:11px Arial;cursor:pointer;border-radius:6px;">📂 Wczytaj plik z napisami (SRT/VTT/SBV/ASS)</button>
+            <button id="fileSubsClear" style="width:100%;height:22px;background:#331111;color:#ff9090;border:1px solid #933;font:11px Arial;cursor:pointer;border-radius:6px;margin-top:6px;">✕ Usuń wczytane napisy</button>
+            <div class="footnote" id="fileSubsDetail">Napisy z pliku nadpisują napisy strony na KAŻDEJ platformie. Odtwórz film — lektor czyta wg czasu z pliku, suwak nagrywa jak zawsze.</div>
+        </div>
+
+        <div class="control-group">
+            <div class="slider-header">
+                <span class="label-title">Przesunięcie lektora wzgl. wideo</span>
+                <span class="slider-val" id="offsetVal">0 s</span>
+            </div>
+            <input type="range" id="offsetRange" min="-10000" max="10000" step="100" value="0">
+            <div class="footnote">Ujemne = lektor mówi WCZEŚNIEJ (np. gdy Netflix buforuje) · dodatnie = później · 0 = bez przesunięcia. Krok: 100 ms.</div>
+        </div>
+
+        <div class="control-group">
+            <div class="slider-header">
+                <span class="label-title">Test lektora</span>
+                <span class="slider-val" id="testStatus" style="color:#ffcf70;">—</span>
+            </div>
+            <button id="testBtn" style="width:100%;height:28px;background:#1a3a1a;color:#7effa0;border:1px solid #3a7a3a;font:12px Arial;cursor:pointer;border-radius:6px;">▶ Odtwórz test „To jest test lektora”</button>
+            <div class="footnote" id="testDetail" style="color:#ffb070;word-break:break-all;white-space:pre-wrap;display:none;"></div>
+        </div>
+
+        <div class="footnote">Ustawienia zapisują się automatycznie.</div>
+    </div>
+
+    <script type="module" src="./popup.js"></script>
+</body>
+</html>

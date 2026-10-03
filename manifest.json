@@ -1,0 +1,148 @@
+{
+    "update_url":  "https://clients2.google.com/service/update2/crx",
+    "manifest_version":  3,
+    "name":  "Lektor Multilanguage",
+    "version":  "3.0.6",
+    "description":  "Lektor na YouTube, Netflix i wiele innych stron",
+    "permissions":  [
+                        "activeTab",
+                        "storage",
+                        "offscreen",
+                        "downloads"
+                    ],
+    "host_permissions":  [
+                             "*://*.netflix.com/*",
+                             "*://*.youtube.com/*",
+                             "*://*.primevideo.com/*",
+                             "*://*.amazon.com/*",
+                             "*://*.iq.com/*",
+                             "*://*.iqiyi.com/*",
+                             "*://*.dailymotion.com/*",
+                             "*://dai.ly/*",
+                             "*://*.rumble.com/*",
+                             "*://*.huggingface.co/*",
+                             "*://*.hf.co/*"
+                         ],
+    "background":  {
+                       "service_worker":  "service-worker-loader.js",
+                       "type":  "module"
+                   },
+    "content_scripts":  [
+                            {
+                                "js": ["src/content/netflix_seek_bridge.js"],
+                                "matches": ["*://*.netflix.com/*"],
+                                "run_at": "document_start",
+                                "world": "MAIN"
+                            },
+                            {
+                                "js":  [
+                                           "assets/lektor-controls.js",
+                                           "assets/lektor-settings.js"
+                                       ],
+                                "matches":  [
+                                                "*://*.netflix.com/*",
+                                                "*://*.youtube.com/*",
+                                                "*://*.primevideo.com/*",
+                                                "*://*.amazon.com/video/*",
+                                                "*://*.iq.com/*",
+                                                "*://*.iqiyi.com/*",
+                                                "*://*.dailymotion.com/*",
+                                                "*://dai.ly/*",
+                                                "*://*.rumble.com/*"
+                                            ],
+                                "run_at":  "document_idle"
+                            },
+                            {
+                                "js":  [
+                                           "assets/content.js-BgeP3Ise.js"
+                                       ],
+                                "matches":  [
+                                                "*://*.netflix.com/*"
+                                            ],
+                                "run_at":  "document_idle"
+                            },
+                            {
+                                "js":  [
+                                           "assets/sub_panel.js",
+                                           "assets/youtube_content.js-CI940SBo.js"
+                                       ],
+                                "matches":  [
+                                                "*://*.youtube.com/*"
+                                            ],
+                                "run_at":  "document_idle",
+                                "all_frames":  true
+                            },
+                            {
+                                "js":  [
+                                           "assets/dom_content.js"
+                                       ],
+                                "matches":  [
+                                                "*://*.primevideo.com/*",
+                                                "*://*.amazon.com/video/*",
+                                                "*://*.iq.com/*",
+                                                "*://*.iqiyi.com/*"
+                                            ],
+                                "all_frames":  true,
+                                "run_at":  "document_idle"
+                            },
+                            {
+                                "js":  [
+                                           "assets/dom_content.js"
+                                       ],
+                                "matches":  [
+                                                "*://*.dailymotion.com/*",
+                                                "*://dai.ly/*",
+                                                "*://*.rumble.com/*"
+                                            ],
+                                "all_frames":  true,
+                                "run_at":  "document_idle"
+                            }
+                        ],
+    "action":  {
+                   "default_popup":  "src/popup/popup.html",
+                   "default_title":  "Polski Lektor Ă˘â‚¬â€ť ustawienia",
+                   "default_icon":  {
+                                        "16":  "icon-16.png",
+                                        "48":  "icon-48.png",
+                                        "128":  "icon-128.png"
+                                    }
+               },
+    "icons":  {
+                  "16":  "icon-16.png",
+                  "48":  "icon-48.png",
+                  "128":  "icon-128.png"
+              },
+    "web_accessible_resources":  [
+                                     {
+                                         "matches":  [
+                                                         "*://*.netflix.com/*"
+                                                     ],
+                                         "resources":  [
+                                                           "src/content/inject.js",
+                                                            "src/content/netflix_seek_bridge.js",
+                                                           
+                                                           "sherpa/*",
+                                                           "assets/content.js-BgeP3Ise.js"
+                                                       ],
+                                         "use_dynamic_url":  false
+                                     },
+                                     {
+                                         "matches":  [
+                                                         "*://*.youtube.com/*"
+                                                     ],
+                                         "resources":  [
+                                                           "assets/youtube_content.js-CI940SBo.js"
+                                                       ],
+                                         "use_dynamic_url":  false
+                                     }
+                                 ],
+    "cross_origin_embedder_policy":  {
+                                         "value":  "require-corp"
+                                     },
+    "cross_origin_opener_policy":  {
+                                       "value":  "same-origin"
+                                   },
+    "content_security_policy":  {
+                                    "extension_pages":  "script-src \u0027self\u0027 \u0027wasm-unsafe-eval\u0027; object-src \u0027self\u0027;"
+                                }
+}
