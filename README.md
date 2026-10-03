@@ -78,6 +78,37 @@ sherpa/
 
 ---
 
+## Wielojęzyczność
+
+Wbudowany głos to **Piper `pl_PL-meski_wg_glos-medium`** — jedyny model dołączony do paczki, ładowany z dysku przy pierwszym uruchomieniu.
+
+Poza tym popup ma sekcję **„Języki świata"**, która pozwala pobrać dodatkowe głosy przez internet. Katalog `sherpa/merged_models.json` zawiera **1379 pozycji**, z czego **1333 są obsługiwane** i widoczne w interfejsie:
+
+| Rodzina | Głosów | Język / zastosowanie | Pobieranie |
+|---|---:|---|---|
+| **MMS** (Meta) | 1138 | praktycznie każdy język świata | ✅ |
+| **Piper** | 169 | wysokiej jakości, głównie europejskie | ✅ |
+| **Coqui** | 25 | bg, cs, da, de, en, es, et, fi, fr, ga, hr, lt, lv, mt, nl, **pl**, pt, ro, sk, sl, sv, uk | ✅ |
+| **Cantonese** | 1 | zh-HK | ✅ |
+
+Głos MMS, Coqui i Cantonese mają własny `tokens.txt` i nie korzystają z espeak-ng. Piper używa go do fonetyzacji — dlatego dla niego paczka zawiera katalog `espeak-ng-data` (355 plików).
+
+Uwaga: 5 pozycji MMS (`mms_amh`, `mms_guk`, `mms_kor`, `mms_sgw`, `mms_tir`) wypada z filtra, bo w katalogu mają `url` ustawione na `"Not available"` — bez adresu nie ma skąd ich pobrać.
+
+### Czego katalog nie udostępnia
+
+Z 46 pozycji katalogu **nie da się pobrać przez to rozszerzenie**. Świadomie je odfiltrowano — zarówno w `langNormalizeCatalog()` (`popup.js`), gdzie każdy głos musi przejść przez jeden z czterech rozpoznanych wzorców, jak i dlatego, że silnik nie potrafi ich obsłużyć:
+
+- **Kokoro** (3 pozycje: `kokoro-en-en-19`, `kokoro-zh_en-int8-multi`, `kokoro-zh_en-multi-lang`) — Kokoro w sherpa-onnx wymaga osobnej funkcji konfiguracji (`initSherpaOnnxKokoroModelConfig`) i innego formatu pakietów niż VITS. Rozszerzenie wywołuje wyłącznie `offlineTtsVitsModelConfig`, więc Kokoro nie ma czego użyć. Dodanie go wymagałoby nowej ścieżki syntezy w workerze i nowej ścieżki pobierania w popupie.
+- **mimic3 / melo / icefall / zh-fs / ljs / vctk** (38 pozycji) — ich repozytoria na Hugging Face są *gated* i wymagają konta oraz tokenu API, więc pobranie bez zalogowania zwraca 401.
+- **mms_amh, mms_guk, mms_kor, mms_sgw, mms_tir** (5 pozycji) — brak adresu pobierania w katalogu (`url` = `"Not available"`).
+
+Razem: 3 + 38 + 5 = **46 pozycji odfiltrowanych**, 1379 − 46 = **1333 widocznych w interfejsie**.
+
+Jeśli potrzebujesz któregoś z tych głosów, działa **sekcja „Własny głos"** — wgrywasz pliki `.onnx` + `tokens.txt` + `.onnx.json` z dysku ręcznie.
+
+---
+
 ## Jak to działa
 
 ```
