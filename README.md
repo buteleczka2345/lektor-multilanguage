@@ -112,4 +112,4 @@ Service worker (background.js)   → routing, pamięć ustawień
 
 MIT — patrz [LICENSE](LICENSE).
 
-Modele głosu (Piper `pl_PL-meski_wg_glos-medium`, sherpa-onnx, espeak-ng) są objęte **własnymi licencjami** swoich autorów — patrz pliki w katalogu modelu.
+Modele głosu (Piper `pl_PL-meski_wg_glos-medium`, sherpa-onnx, espeak-ng) są objęte **własnymi licencjami** swoich autorów — patrz pliki w katalogu modelu oraz <https://k2-fsa.github.io/sherpa/onnx/tts/license.html>.
