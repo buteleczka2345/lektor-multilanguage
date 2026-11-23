@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<!-- [AGENT-EXP] 2026-10-21: Multilektor — dokument offscreen (silnik mowy, OCR). Napisany od nowa.
+     keepAlive: cicha pętla (własny 25-ms WAV), żeby Chrome nie zamykał dokumentu w trakcie pracy lektora;
+     tts-player: odtwarzacz kwestii. Identyfikatory czyta offscreen.js. -->
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<title>Multilektor — silnik mowy</title>
+<script src="../../assets/censor.js"></script>
+<script src="ocr_engine.js"></script>
+<script src="ppocr_engine.js"></script>
+<script type="module" src="offscreen.js"></script>
+</head>
+<body>
+<audio id="keepAlive" loop src="data:audio/wav;base64,UklGRuwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YcgAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=="></audio>
+<audio id="tts-player" autoplay></audio>
+</body>
+</html>

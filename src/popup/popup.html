@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multilektor</title>
+    <!-- [VOX] 2026-10-20: wygląd VoxNemesis (indygo, karty, zakładki). Style w popup.css.
+         Wszystkie id i data-gk bez zmian — popup.js i glos/popup_glos.js szukają elementów tylko po nich. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" crossorigin="anonymous">
+    <link rel="stylesheet" href="popup.css">
+    <!-- [AGENT-EXP] 2026-10-21: język interfejsu (PL / EN) — słownik + tłumacz; przed resztą skryptów -->
+    <script src="../../assets/i18n_en.js"></script>
+    <script src="../../assets/i18n.js" data-page></script>
+</head>
+<body>
+    <div class="top">
+        <header class="title-row">
+            <img src="../../icon-128.png" alt="" class="logo-mark">
+            <div>
+                <h1>Multi<span class="highlight">lektor</span></h1><!-- [AGENT-EXP] 2026-10-21: nowa nazwa -->
+                <div class="sub">Czyta napisy jako lektor</div>
+            </div>
+            <!-- OPTIONS-PAGE: ikona otwierająca stronę ustawień -->
+            <select class="ui-lang" data-ui-lang data-noi18n title="Język interfejsu / Interface language" aria-label="Język interfejsu / Interface language"><option value="auto">Auto</option><option value="pl">PL</option><option value="en">EN</option></select><!-- [AGENT-EXP] 2026-10-21 -->
+            <!-- [AGENT-EXP] 2026-10-26: 🧩 edycja układu modułów popupu -->
+            <button id="layoutEditBtn" class="icon-btn edit" type="button" title="Edytuj układ popupu (przestaw, schowaj, przenieś moduły)" aria-pressed="false">✏️</button>
+            <button id="openOptionsBtn" class="icon-btn" type="button" title="Wszystkie ustawienia (strona HTML)">⚙️</button>
+        </header>
+        <nav class="tabs" role="tablist">
+            <button class="tab active" type="button" role="tab" data-tab="lektor">Lektor</button>
+            <button class="tab" type="button" role="tab" data-tab="napisy">Napisy</button>
+            <button class="tab" type="button" role="tab" data-tab="glosy">Głosy</button>
+            <button class="tab" type="button" role="tab" data-tab="narzedzia">Narzędzia</button>
+            <button class="tab" type="button" role="tab" data-tab="moje" hidden>★ Moje</button><!-- [AGENT-EXP] 2026-10-26: własna zakładka (pusta = schowana) -->
+        </nav>
+        <!-- [AGENT-EXP] 2026-10-26: pasek trybu edycji układu (widoczny tylko w trybie ✏️) -->
+        <div id="layoutEditBar" class="mod-editbar" hidden>
+            <div class="mod-editbar-txt"><b>✏️ Edycja układu</b><span>Przeciągnij ⠿ albo użyj ↑ ↓. Moduł upuszczony na zakładkę przechodzi do niej.</span></div>
+            <div class="mod-editbar-btns">
+                <button id="layoutResetBtn" class="btn small" type="button" title="Wszystkie moduły wracają na swoje miejsca">↺ Domyślny</button>
+                <button id="layoutMoreBtn" class="btn small" type="button" title="Strony, na których moduł się pokazuje, i zakładka na start — w Ustawieniach">⚙ Więcej</button>
+                <button id="layoutDoneBtn" class="btn primary small" type="button">✓ Gotowe</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= LEKTOR ================= -->
+    <section class="pane" data-pane="lektor" role="tabpanel">
+
+        <!-- [AGENT-EXP] 2026-11-14: jedno miejsce, w którym widać, co NAPRAWDĘ robi lektor i cenzor -->
+        <div class="card" data-mod="status" id="statusCard">
+            <div class="card-head"><b>Status</b><span class="pill" id="statusPill">—</span></div>
+            <div id="statusLines" class="footnote">—</div>
+        </div>
+        <div class="card hero switch-row" data-mod="lektor">
+            <div class="lbl">
+                <b>Lektor</b>
+                <span>Włącz / wyłącz czytanie napisów</span>
+                <span id="lektorSourceLine" style="display:none;"></span><!-- [FIX 2026-11-02] „czytam z: …” -->
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="enableToggle" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
+
+        <!-- [FIX 2026-11-02] 📋 lektor tylko na domenach z białej listy (domyślnie WŁ.) + stan aktywnej karty -->
+        <div class="card" data-mod="domeny">
+            <label class="check" title="Lektor uruchamia się tylko na stronach z białej listy (Ustawienia → 📋 Białe i czarne listy domen). Na innych stronach nie działa i nie zużywa procesora. Wyłączone = lektor wszędzie, gdzie się uruchomi."><input type="checkbox" id="domainListsCheck" checked> 📋 Tylko domeny z listy</label>
+            <div class="footnote" id="domainStateLine"></div>
+            <div class="btn-row" style="margin-top:6px;">
+                <button id="domainAddBtn" class="btn small" type="button" style="display:none;">➕ Dodaj tę stronę</button>
+                <button id="domainEditBtn" class="btn small" type="button">✏️ Edytuj listy</button>
+            </div>
+        </div>
+
+        <!-- [AGENT-EXP] 2026-10-17: wybór silnika mowy (ten sam klucz ttsEngine co w Ustawieniach) + kropka serwera -->
+        <div class="card" data-mod="silnik">
+            <div class="card-head">
+                <b>🗣 Silnik mowy</b>
+                <span class="pill" id="ttsEngineState"><span id="ttsEngineDot" class="dot"></span><span id="ttsEngineText">…</span></span>
+            </div>
+            <select id="ttsEngineSelect">
+                <!-- [AGENT-EXP] 2026-10-24: Matcha 🌐 domyślna (na górze); Sherpa bez wbudowanego głosu — tylko pobrane/własne -->
+                <!-- [FIX 2026-11-02] dwie grupy: bez serwera / jeden silnik serwerowy (własny adres + gotowe ustawienia znanych serwerów) -->
+                <optgroup label="W przeglądarce — bez serwera">
+                <option value="matcha">Matcha-TTS-PL 🌐 — w przeglądarce (domyślny) lub serwer :9000</option>
+                <option value="sherpa">Sherpa / Piper — pobrane głosy (Języki świata)</option>
+                <!-- [AGENT-EXP] 2026-10-21: 🗣 Web Speech API (jak DubMog Standard) -->
+                <option value="browser">Głos przeglądarki (Google / Microsoft) — darmowy, bez serwera</option>
+                <option value="supertonic">Supertonic 3 (VoxNemesis) — wbudowany, CPU / GPU</option>
+                </optgroup>
+                <optgroup label="Serwer lokalny (WebSocket)">
+                <option value="server">Serwer lokalny — własny adres</option>
+                <option value="xtts">XTTS v2 (TTS2) — :8000</option>
+                <option value="audio8">Audio8 ONNX INT8 — :9300 (wolny)</option>
+                <option value="f5">Lektor Marek (F5-TTS) — :9400</option>
+                <option value="pocket">Pocket-TTS-PL — :9200</option>
+                <option value="omnivoice">OmniVoice — :9100 (GPU)</option>
+                <option value="kokoro">Kokoro — :9500 (GPU)</option>
+                </optgroup>
+            </select>
+            <div id="srvRow" class="field" style="display:none;">
+                <label class="field-label" for="serverUrlInput">Adres serwera (ws://…)</label>
+                <input type="text" id="serverUrlInput" class="text-input" placeholder="ws://127.0.0.1:9000" spellcheck="false">
+            </div>
+            <div class="footnote" id="ttsEngineHint">—</div>
+            <!-- [AGENT-EXP] 2026-10-17: głos dla wybranego silnika (przeniesione ze strony Ustawienia) -->
+            <!-- [AGENT-EXP] 2026-11-02: lista „Matcha 🌐 — wariant” usunięta — wariant wybiera „Włącz” w „Języki świata” -->
+            <div id="ttsVoiceRow" class="field" style="display:none;">
+                <label class="field-label" id="ttsVoiceLabel" for="ttsVoiceSelect">Głos</label>
+                <select id="ttsVoiceSelect"></select>
+                <input id="ttsVoiceText" class="text-input" type="text" placeholder="default lub ID z voices\" style="display:none;">
+            </div>
+            <!-- [VOX] 2026-10-20: Supertonic — sprzęt, jakość i stan silnika -->
+            <div id="stRows" class="st-rows" style="display:none;">
+                <div class="st-grid">
+                    <div class="field">
+                        <label class="field-label" for="stBackend">Sprzęt</label>
+                        <select id="stBackend">
+                            <option value="cpu">CPU — procesor</option>
+                            <option value="igpu">GPU zintegrowana</option>
+                            <option value="gpu">GPU dedykowana</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="stSteps">Jakość / szybkość</label>
+                        <select id="stSteps">
+                            <option value="2">2 — najszybciej</option>
+                            <option value="3">3 — szybko</option>
+                            <option value="4">4 — zalecane</option>
+                            <option value="5">5</option>
+                            <option value="6">6 — lepiej</option>
+                            <option value="8">8 — wolniej</option>
+                            <option value="10">10 — najlepsza</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="st-status" id="stStatus">Silnik: —</div>
+            </div>
+        </div>
+
+        <!-- [AGENT-EXP] 2026-10-26: buforowanie jako osobny moduł (wcześniej na dole karty silnika) -->
+        <div class="card" data-mod="bufor">
+            <div class="card-head"><b>💾 Buforowanie</b></div>
+            <label class="check" style="margin-top:0;"><input type="checkbox" id="bufPauzaCheck" checked> Buforuj przy zatrzymanym filmie (po starcie czyta od razu z bufora)</label>
+            <label class="check" title="Gdy przejdziesz na inną kartę, lektor dalej nagrywa kwestie do bufora (nie czyta na głos). Karta z filmem nie zostanie uśpiona przez Chrome."><input type="checkbox" id="bufTloCheck" checked> Buforuj w tle (inna karta) — karta nie jest usypiana</label>
+        </div>
+
+        <div class="card" data-mod="predkosc">
+            <div class="card-head"><b>Prędkość lektora</b><span class="pill" id="speedVal">1.0x</span></div>
+            <input type="range" id="speedRange" min="0.5" max="3.0" step="0.1" value="1.0">
+            <!-- [AGENT-EXP] 2026-10-26: auto-nadrabianie (klucz autoCatchup, ten sam co w Ustawieniach) -->
+            <label class="check" title="Przyspiesza (najwyżej do 1,8×), gdy kwestia nie mieści się w czasie albo w kolejce czekają następne"><input type="checkbox" id="autoCatchupCheck" checked> Auto-nadrabianie (najwyżej 1,8×, gdy kwestia nie mieści się w czasie)</label>
+        </div>
+
+        <div class="card" data-mod="ducking">
+            <div class="card-head"><b>Ducking (wyciszanie filmu)</b><span class="pill" id="duckVal">20%</span></div>
+            <input type="range" id="duckRange" min="0" max="100" step="5" value="20">
+            <!-- [FIX 2026-11-02] 🔉 ściszanie tylko na czas mowy lektora (płynne przejścia) -->
+            <label class="check"><input type="checkbox" id="duckWhileCheck"> Ściszaj film tylko, gdy lektor mówi (płynnie, jak w telewizji)</label>
+            <label class="check"><input type="checkbox" id="duckInstantCheck"> Ściszaj i przywracaj natychmiast (bez płynnego przejścia)</label>
+        </div>
+
+        <div class="card" data-mod="glosnosc">
+            <div class="card-head"><b>Głośność lektora</b><span class="pill" id="volumeVal">100%</span></div>
+            <input type="range" id="volumeRange" min="0" max="400" step="5" value="100">
+        </div>
+
+        <div class="card" data-mod="zapas"><!-- [AGENT-EXP] 2026-10-25: zapas do przodu na głównej stronie (zamiana z przesunięciem) -->
+            <!-- [AGENT-EXP] 2026-11-16: konkrety zamiast ściany tekstu: GDZIE JESTEM · ILE MAM ZAPASU · ILE BRAKUJE,
+                 pod spodem same przetłumaczone zdania z bufora. Logi silnika schowane w „Diagnostyka”. -->
+            <div class="card-head"><b>Nagrywanie / zapas do przodu</b><span class="pill" id="lookaheadVal">na bieżąco</span></div>
+            <input type="range" id="lookaheadRange" min="0" max="120" step="1" value="3">
+            <div class="rec-head">
+                <div class="rec-col">
+                    <span class="rec-num" id="recPos">—</span>
+                    <span class="rec-cap" id="recPosCap">pozycja w filmie</span>
+                </div>
+                <div class="rec-col rec-right">
+                    <span class="rec-num" id="recBuf">—</span>
+                    <span class="rec-cap" id="recBufCap">zapas do przodu</span>
+                </div>
+            </div>
+            <div class="rec-meter" id="recMeter"><i id="recMeterFill"></i></div>
+            <div class="rec-gap" id="recGap">—</div>
+            <div class="rec-sub-head" id="recListCap">W buforze — przetłumaczone zdania</div>
+            <ol class="rec-list" id="recAhead"><li class="rec-empty">—</li></ol>
+            <div class="footnote" id="recDetail">—</div>
+            <details class="rec-diag" id="recDiag">
+                <summary>🛠 Diagnostyka (źródło napisów, silnik, logi)</summary>
+                <div class="footnote ok" id="recTelemetry">—</div>
+                <div class="footnote scroll pre" id="recLog">—</div>
+            </details>
+            <div class="btn-row">
+                <button id="saveBufferBtn" class="btn ok small" type="button" style="flex:0 0 auto;" title="Zapisuje nagrane kwestie tego filmu z pamięci RAM do jednego pliku .zip w Pobranych (każda kwestia osobno + spis czasów + napisy .srt)">💾 Zapisz bufor filmu</button>
+                <span class="footnote" id="saveBufferInfo" style="margin:0;align-self:center;"></span>
+            </div>
+        </div>
+
+        <div class="card" data-mod="pasek">
+            <div class="card-head"><b>📊 Pasek lektora</b></div>
+            <label class="check" style="margin-top:0;"><input type="checkbox" id="lektorBarCheck"> Pokazuj na filmie</label>
+            <div class="footnote" style="margin-top:4px;line-height:1.45;">
+                Górna linia: <b style="color:#2ecc71;">■</b> przeczytane · <b style="color:#ff9f1a;">■</b> dźwięk gotowy ·
+                <b style="color:#bbb;">■</b> tekst bez dźwięku · <b style="color:#555;">■</b> czeka na tłumaczenie.<br>
+                Dolna: białe = obejrzane, pomarańczowe = zapas nagrań. ⏱ opóźnienie lektora · ⏭ pominięte kwestie (10 min).
+            </div>
+        </div>
+
+        <div class="card" data-mod="test">
+            <div class="card-head"><b>Test lektora</b><span class="pill" id="testStatus">—</span></div>
+            <div class="btn-row">
+                <button id="testBtn" class="btn primary" type="button" title="Odtwarza „To jest test lektora” wybranym silnikiem">▶ Test lektora</button>
+                <button class="btn" type="button" data-open-options>⚙️ Wszystkie opcje</button>
+            </div>
+            <div class="footnote err pre" id="testDetail" style="display:none;"></div>
+        </div>
+    </section>
+
+    <!-- ================= NAPISY ================= -->
+    <section class="pane" data-pane="napisy" role="tabpanel" hidden>
+        <div class="card" data-mod="calenapisy">
+            <div class="card-head"><b>Całe napisy — na żądanie</b></div>
+            <button id="fullSubsBtn" class="btn primary" type="button">⬇ Pobierz całe napisy (ten film)</button>
+            <div class="footnote warn" id="fullSubsStatus">—</div>
+            <!-- [FIX 2026-11-22] lektor szuka miejsca napisów SAM (IT, Kreator, wbudowane) — przycisk tylko zapomina stare
+                 miejsce i szuka od nowa (gdy lektor czyta nie to, co trzeba, albo milczy po zmianie strony) -->
+            <button id="findSubsBtn" class="btn small mt" type="button">↺ Szukaj miejsca napisów od nowa</button>
+            <div class="footnote info" id="findSubsStatus">—</div>
+            <!-- [FIX 2026-11-02] eksport przetłumaczonych napisów (to, co czyta lektor) do .srt -->
+            <button id="exportSrtBtn" class="btn mt" type="button">💾 Zapisz napisy PL do pliku .srt</button>
+            <div class="footnote" id="exportSrtStatus">—</div>
+        </div>
+
+        <!-- [FIX 2026-11-10] 🧪 Kreator napisów w POPUPIE (wcześniej tylko w Ustawieniach): wskazanie napisów
+             myszką na karcie z filmem, lista własnych źródeł tej strony, wpis selektora z ręki. Zapis wyboru robi
+             tło (popup zamyka się w chwili kliknięcia w stronę) — patrz KREATOR_PICK_SAVE w background.js. -->
+        <div class="card" data-mod="kreator">
+            <div class="card-head"><b>🧪 Kreator napisów — wskaż na ekranie</b><span class="pill" id="kreatorPill">—</span></div>
+            <button id="kreatorPickBtn" class="btn primary" type="button">🎯 Wskaż napisy myszką</button>
+            <div class="footnote" id="kreatorStatus">—</div>
+            <!-- [FIX 2026-11-22] karta odchudzona: zdublowany „🔍 automat” usunięty (jest w karcie „Całe napisy” wyżej),
+                 ręczny selektor i lista wszystkich domen — tylko w Ustawieniach (przycisk niżej). Przełącznik pokazujemy
+                 dopiero, gdy domena ma choć jedno własne źródło. -->
+            <label class="check" id="kreatorOnRow" style="display:none;"><input type="checkbox" id="kreatorOn"> Używaj własnych źródeł na tej domenie</label>
+            <div id="kreatorList" class="kreator-list"></div>
+            <button id="kreatorMoreBtn" class="btn small mt" type="button">⚙ Ręczny selektor i wszystkie domeny — Ustawienia</button>
+        </div>
+
+        <div class="card" data-mod="plik">
+            <div class="card-head"><b>Napisy z pliku</b><span class="pill" id="fileSubsStatus">brak</span></div>
+            <input type="file" id="fileSubsInput" accept=".srt,.vtt,.sbv,.ass,.ssa,.txt,.sub,.smi,.lrc,.dfxp,.ttml" style="display:none;">
+            <input type="file" id="fileSubsFolderInput" webkitdirectory directory multiple style="display:none;">
+            <div class="btn-row" style="margin-top:0;">
+                <button id="fileSubsBtn" class="btn" type="button">📂 Wczytaj plik</button>
+                <button id="fileSubsFolderBtn" class="btn" type="button">📁 Cały folder</button>
+            </div>
+            <select id="fileSubsFileSelect" class="mt" style="display:none;"></select>
+            <button id="fileSubsClear" class="btn danger small mt" type="button">✕ Usuń wczytane napisy</button>
+            <div class="footnote" id="fileSubsDetail">—</div>
+        </div>
+
+        <div class="card" data-mod="bazy">
+            <div class="card-head"><b>🌐 Szukaj w bazach napisów</b><span class="pill" id="dbStatus"></span></div>
+            <div class="inline-fields">
+                <input type="text" id="dbQuery" class="text-input" placeholder="tytuł filmu / serialu">
+                <input type="number" id="dbSeason" class="text-input num" min="0" placeholder="S" title="Sezon (puste = film)">
+                <input type="number" id="dbEpisode" class="text-input num" min="0" placeholder="E" title="Odcinek">
+            </div>
+            <div class="btn-row">
+                <select id="dbLang">
+                    <option value="pl,en">Polskie, potem angielskie</option>
+                    <option value="pl">Tylko polskie</option>
+                    <option value="en">Tylko angielskie (tłumaczę)</option>
+                </select>
+                <button id="dbSearchBtn" class="btn primary" type="button" style="flex:0 0 auto;">🔍 Szukaj</button>
+            </div>
+            <div id="dbResults" class="list-box flush" style="display:none;"></div>
+            <div class="footnote" id="dbDetail">—</div>
+        </div>
+
+        <div class="card" data-mod="przesuniecie"><!-- [AGENT-EXP] 2026-10-25: przesunięcie lektora tu (zamiana z zapasem do przodu) -->
+            <div class="card-head"><b>Przesunięcie napisów (lektor + cenzor)</b><span class="pill" id="offsetVal">0 s</span></div>
+            <input type="range" id="offsetRange" min="-10000" max="10000" step="100" value="0">
+            <label class="check" title="Na filmie pojawiają się kwestie z pobranego pliku przesunięte tym suwakiem (przekleństwa na czerwono, 🔇 = film wyciszony). Tekst ma się pojawiać razem z głosem."><input type="checkbox" id="offsetPreviewCheck"> 👁 Podgląd napisów na ekranie (sprawdź przesunięcie)</label>
+        </div>
+    </section>
+
+    <!-- ================= GŁOSY ================= -->
+    <section class="pane" data-pane="glosy" role="tabpanel" hidden>
+
+        <div class="card" data-mod="wlasnyglos">
+            <div class="card-head"><b>Własny głos (Sherpa/Piper lub Matcha z folderu)</b><!-- [AGENT-EXP] 2026-11-02 --></div>
+            <input type="file" id="customVoiceInput" accept=".onnx,.txt,.json" multiple webkitdirectory style="display:none;">
+            <div id="customVoiceList"></div>
+            <button id="customVoiceBtn" class="btn mt" type="button">📂 Wskaż pliki własnego głosu (onnx + txt + json)</button>
+            <button id="customVoiceDisable" class="btn danger small mt" type="button" style="display:none;">✕ Wyłącz własny głos</button><!-- [AGENT-EXP] 2026-10-24 -->
+            <div class="footnote warn" id="customVoiceStatus">—</div>
+        </div>
+
+        <div class="card" data-mod="jezyki">
+            <div class="card-head"><b>🌐 Języki świata — pobieranie głosów</b></div>
+            <input type="text" id="langSearch" class="text-input" placeholder="Szukaj języka (np. niemiecki, arabski, EN)…">
+            <div class="btn-row">
+                <select id="langRegionFilter">
+                    <option value="all">Wszystkie regiony</option>
+                </select>
+                <select id="langTypeFilter">
+                    <option value="all">Wszystkie dostępne</option>
+                    <option value="mms">Tylko MMS (~1100 jęz.)</option>
+                    <option value="piper">Tylko Piper</option>
+                    <option value="coqui">Tylko Coqui (jakość!)</option>
+                    <option value="matcha">Tylko Matcha 🌐 (w przeglądarce)</option><!-- [AGENT-EXP] 2026-10-24 -->
+                    <option value="supertonic">Tylko Supertonic 🌐 (w przeglądarce)</option><!-- [AGENT-EXP] 2026-10-24 -->
+                </select>
+            </div>
+            <div class="footnote warn" id="langStoreStatus">Ładuję katalog modeli…</div>
+            <div id="langStoreList" class="list-box"></div>
+        </div>
+
+        <!-- [FIX 2026-11-02] JEDEN cenzor (wcześniej dwa: mowa lektora tutaj, dźwięk filmu w Ustawieniach — z osobnymi listami) -->
+        <div class="card" data-mod="cenzura">
+            <div class="card-head"><b>🤬 Cenzor przekleństw</b><span class="pill">jedna lista</span></div>
+            <label class="check"><input type="checkbox" id="censorSpeechCheck"> 🗣 Wyciszaj w mowie lektora (to, co czyta)</label>
+            <select id="censorModeSelect" class="mt">
+                <option value="remove">Usuń słowo (cicho) — zalecane</option>
+                <option value="beep">[BEEP] (obcy głos wypowie na głos)</option>
+                <option value="replace">Gwiazdki (k****)</option>
+                <option value="dashes">Kreski (---------- w napisach)</option>
+            </select>
+            <label class="check"><input type="checkbox" id="cenzorOnCheck"> 🔇 Dźwięk filmu — pobrane napisy (YouTube, Netflix, HBO Max)</label>
+            <label class="check"><input type="checkbox" id="cenzorLiveCheck"> 🔇 Dźwięk filmu — tryb live (napisy z ekranu)</label>
+            <!-- [FIX 2026-11-16] kto ma pierwszeństwo: pobrane napisy / plik+live / live (ekran) -->
+            <select id="cenzorPriority" class="mt" title="Skąd brać napisy — dla cenzora (wyciszanie dźwięku filmu) i lektora: pobrane napisy czy napisy z ekranu (live, np. Immersive Translate)">
+                <option value="file">Priorytet: pobrane napisy (lektor + cenzor; live po końcu pliku)</option>
+                <option value="hybrid">Priorytet: plik + live 30 s przed końcem pliku</option>
+                <option value="live">Priorytet: napisy z ekranu (lektor + cenzor, plik pomijany)</option>
+            </select>
+            <input type="text" id="censorCustomWords" class="text-input mt" placeholder="Własne słowa po przecinku; -słowo = wyjątek…">
+            <div class="footnote warn" id="censorStatus">—</div>
+        </div>
+
+        <!-- [AGENT-EXP] 2026-11-14: czasy ciszy cenzora — same suwaki, bez opisów -->
+        <div class="card" data-mod="cenzorCzasy">
+            <div class="card-head"><b>⏱ Czasy ciszy cenzora</b></div>
+            <div class="field">
+                <label class="field-label" for="czBuffer">Wstecz <span class="pill" id="czBufferVal">500 ms</span></label>
+                <input type="range" id="czBuffer" min="0" max="3000" step="50" value="500">
+            </div>
+            <div class="field">
+                <label class="field-label" for="czHold">Przód <span class="pill" id="czHoldVal">100 ms</span></label>
+                <input type="range" id="czHold" min="0" max="2000" step="50" value="100">
+            </div>
+            <div class="field">
+                <label class="field-label" for="czRate">Tempo tekstu <span class="pill" id="czRateVal">0,60×</span></label>
+                <input type="range" id="czRate" min="0.25" max="2.5" step="0.05" value="0.6">
+            </div>
+        </div>
+    </section>
+
+    <!-- ================= NARZĘDZIA ================= -->
+    <section class="pane" data-pane="narzedzia" role="tabpanel" hidden>
+        <!-- 🎙 Głos i napisy (glos/*): mój głos → tekst, film w karcie → napisy + czytanie -->
+        <div class="card" id="gnBox" data-mod="glosnapisy">
+            <div class="card-head"><b>🎙 Głos i napisy</b></div>
+            <button id="gnGlosBtn" class="gn-big c1" type="button">🎤 Mój głos → tekst (Alt+Shift+1)</button>
+            <button id="gnKartaBtn" class="gn-big c2" type="button">🎧 Film w tej karcie → napisy (Alt+Shift+2)</button>
+            <button id="gnHistBtn" class="gn-big c3" type="button">📜 Napisy na bieżąco (okienko)</button>
+            <div class="gn-row col">
+                <span class="lead">Na próbę:</span>
+                <span>napis odświeżaj:
+                    <select data-gk="kartaRefresh"><option value="0">od razu (jak Google, ~100 ms)</option><option value="300">co 300 ms</option><option value="600">co 600 ms</option><option value="1000">co 1 s</option><option value="fin">tylko zatwierdzony tekst</option></select>
+                </span>
+                <label><input type="checkbox" data-gk="kartaCutSent"> napisy: nowa linijka po kropce (krótsze, ~2 linijki)</label>
+                <label><input type="checkbox" data-gk="kartaFinUp"> gotowy napis od razu piętro wyżej (już się nie zmienia)</label>
+                <span style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;"><label><input type="checkbox" data-gk="kartaBoost"> wzmacniaj mowę dla rozpoznawania (ciche głosy)</label>
+                    <select data-gk="kartaBoostLvl"><option value="1">lekko</option><option value="2">średnio</option><option value="3">mocno</option></select>
+                </span>
+                <label><input type="checkbox" data-gk="kartaShowLive"> pokazuj niegotowe napisy (to, co Google jeszcze słyszy i poprawia)</label>
+                <label><input type="checkbox" data-gk="kartaTopLektor"> gotowy napis = to samo tłumaczenie, które czyta lektor</label>
+                <label><input type="checkbox" data-gk="kartaLekPunct"> lektor: czytaj po przecinku i kropce (tylko tekst już zatwierdzony)</label>
+                <label><input type="checkbox" data-gk="kartaShowEn"> pokazuj oryginał pod napisem</label>
+                <label><input type="checkbox" data-gk="kartaHistAuto"> otwieraj „📜 Napisy na bieżąco” razem z napisami</label>
+            </div>
+            <div class="gn-row col">
+                <label><input type="checkbox" data-gk="gnLocal"> 🔒 rozpoznawanie lokalne (na tym komputerze, bez Google)</label>
+                <button id="gnLocGet" class="gn-small" type="button" style="width:100%;">⬇ Pobierz / sprawdź modele mowy (~40 MB + język: PL ~60 MB, EN ~195 MB)</button>
+                <div id="gnLocInfo"></div>
+            </div>
+            <div id="gnMsg"></div>
+            <details>
+                <summary>⚙ Ustawienia i dziennik</summary>
+                <div class="gn-row">🎤 język:
+                    <select data-gk="glosLang"><option value="pl-PL">polski</option><option value="en-US">angielski</option><option value="de-DE">niemiecki</option><option value="uk-UA">ukraiński</option></select>
+                    <label><input type="checkbox" data-gk="glosDfn"> odszumianie</label>
+                    <input type="range" min="0" max="100" step="5" data-gk="glosDfnLevel" title="siła odszumiania (dB)"><span data-gv="glosDfnLevel"></span>
+                </div>
+                <div class="gn-row">🎧 język filmu:
+                    <select data-gk="kartaLang"><option value="en-US">angielski (USA)</option><option value="en-GB">angielski (UK)</option><option value="de-DE">niemiecki</option><option value="fr-FR">francuski</option><option value="es-ES">hiszpański</option><option value="ru-RU">rosyjski</option><option value="ja-JP">japoński</option><option value="ko-KR">koreański</option></select>
+                </div>
+                <div class="gn-row">
+                    <label><input type="checkbox" data-gk="kartaDfn"> odszumianie</label>
+                    <input type="range" min="0" max="100" step="4" data-gk="kartaDfnLevel" title="siła odszumiania (dB)"><span data-gv="kartaDfnLevel"></span>
+                </div>
+                <div class="gn-row">🎧 tryb:
+                    <select data-gk="kartaMode"><option value="lektor">🗣 lektor (Sherpa) + napisy</option><option value="napisy">💬 same napisy</option></select>
+                </div>
+                <div class="gn-row">
+                    paczki <select data-gk="kartaChunk"><option value="0">całe kwestie</option><option value="3">3 słowa</option><option value="5">5 słów</option><option value="8">8 słów</option></select>
+                </div>
+                <textarea id="gnLog" class="log" readonly></textarea>
+                <div class="gn-row">
+                    <button id="gnCopy" class="gn-small" type="button">📋 Kopiuj dziennik</button>
+                    <button id="gnClear" class="gn-small" type="button">🗑 Wyczyść</button>
+                </div>
+            </details>
+        </div>
+
+        <div class="card" data-mod="lowca">
+            <div class="card-head"><b>🔍 Łowca napisów</b></div>
+            <div class="btn-row" style="margin-top:0;">
+                <button id="lowcaStartBtn" class="btn primary" type="button">🔍 Szukaj napisów</button>
+                <button id="lowcaStopBtn" class="btn danger" type="button" style="display:none;">⏹ Stop</button>
+            </div>
+            <div class="footnote" id="lowcaStatus">—</div>
+            <div id="lowcaItems" class="mini-list" style="display:none;"></div>
+            <!-- [FIX 2026-11-22] Łowca od pierwszej milisekundy strony (jednorazowe przeładowanie) — gdy zwykłe szukanie nic nie dało -->
+            <button id="lowcaFreshBtn" class="btn small mt" type="button" style="display:none;">↻ Szukaj od startu strony (przeładuje kartę)</button>
+            <label class="check"><input type="checkbox" id="lowcaGuiCheck"> Pokazuj przycisk CC Łowcy na stronach www</label>
+        </div>
+
+        <div class="card" data-mod="ait">
+            <div class="card-head"><b>🤖 AI Subtitle Translator</b></div>
+            <button id="aitOpenBtn" class="btn" type="button">🤖 Otwórz AI Subtitle Translator (ustawienia)</button>
+        </div>
+    </section>
+
+    <!-- [AGENT-EXP] 2026-10-26: ★ Moje — zakładka na moduły przeniesione przez użytkownika -->
+    <section class="pane" data-pane="moje" role="tabpanel" hidden></section>
+
+
+    <!-- [AGENT-EXP] 2026-10-26: 🧩 układ modułów — zwykłe skrypty, działają przed modułem popup.js -->
+    <script src="../../assets/domain_lists.js"></script><!-- [FIX 2026-11-02] 📋 listy domen -->
+    <script src="./layout_shared.js"></script>
+    <script src="./popup_layout.js"></script>
+
+    <script type="module" src="./popup.js"></script>
+    <script type="module" src="../../glos/popup_glos.js"></script>
+</body>
+</html>

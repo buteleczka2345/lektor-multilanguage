@@ -1,0 +1,17 @@
+{
+  "extName": {
+    "message": "Multilektor"
+  },
+  "extDesc": {
+    "message": "Polski lektor do filmów: czyta napisy na głos na YouTube, Netflixie i innych stronach, tłumaczy je i ścisza film na czas mowy."
+  },
+  "actionTitle": {
+    "message": "Multilektor — ustawienia"
+  },
+  "cmdGlos": {
+    "message": "Mój głos → tekst: start / stop"
+  },
+  "cmdKarta": {
+    "message": "Film w karcie → napisy: start / stop"
+  }
+}

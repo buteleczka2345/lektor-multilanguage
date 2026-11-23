@@ -1,0 +1,54 @@
+GŁOS I NAPISY — część lektora (przeniesione z działającego rozszerzenia „Głos i Napisy (test)”)
+==============================================================================================
+
+Mostek „Dyktowanie” (assets/dyktowanie_bridge.js) ZOSTAJE — przez niego aplikacja Dyktowanie
+(tts maja\dyktowanie glosowe\dyktowanie, port 47630) każe lektorowi czytać. Nie gryzie się z tym folderem:
+działa tylko na stronie http://127.0.0.1/app, a „Głos i napisy” tylko w zwykłym Chrome po kliknięciu/skrócie.
+Nie włączaj obu napisów z filmu naraz (Dyktowanie „🎧 słuchaj cały czas” + Alt+Shift+2) — czytałyby dwa razy.
+
+DWIE FUNKCJE
+1) 🎤 Mój głos → tekst        Alt+Shift+1  (albo przycisk w popupie lektora, sekcja „🎙 Głos i napisy”)
+   Mówisz do mikrofonu, tekst wpisuje się w pole, w którym stoi kursor.
+2) 🎧 Film w karcie → napisy  Alt+Shift+2  (albo przycisk w popupie, na karcie z filmem)
+   Dźwięk cyfrowo z karty → rozpoznawanie Google → tłumacz Chrome → żółte napisy na filmie
+   Tryb do wyboru w ustawieniach: „lektor (Sherpa) + napisy” (domyślnie) albo „same napisy”.
+   Czyta wyłącznie głos lektora z Sherpy — prędkość i głos ustawiasz jak zwykle w lektorze.
+3) 📜 Napisy na bieżąco — wysokie okienko z gotowymi napisami (całe zdania, już bez zmian), dopisywanymi na dole.
+   Przycisk w popupie lektora albo w okienku „🎧 Film → napisy”. Historia trzyma się do zamknięcia Chrome.
+
+🔒 ROZPOZNAWANIE LOKALNE (domyślnie wł., przełącznik w popupie lektora)
+- Mowa (mój głos i film w karcie) rozpoznawana modelem Chrome na tym komputerze — nic nie idzie do Google,
+  jak w wersji lokalnej programu Dyktowanie. Odznacz, a rozpoznaje Google (przez internet).
+- Modele trzeba RAZ pobrać w tym Chrome (Dyktowanie ma osobny profil): popup lektora →
+  „⬇ Pobierz / sprawdź modele mowy” (albo przycisk „Pobierz” w okienku). Nie zamykaj okienka, aż będzie ✓.
+  Rozmiar (zmierzony u Ciebie): silnik ~40 MB + polski ~60 MB + angielski ~195 MB = ok. 290 MB.
+- Lokalny model nie stawia przecinków ani kropek — lektor sam to wykrywa i wtedy czyta paczki co N słów
+  i resztę po pauzie (nie czeka na kropkę). Niezatwierdzone słowa z końca sesji nie przepadają.
+- Bez modelu okienko czeka i to pisze — nie przełącza się po cichu na Google.
+
+NA PRÓBĘ (przełączniki w popupie, działają od razu, można wyłączyć bez kasowania)
+- gotowy napis od razu piętro wyżej — górna linijka (biała) to tekst zatwierdzony, już się nie zmieni; na dole to, co Google jeszcze słyszy,
+- gotowy napis = to samo tłumaczenie, które czyta lektor — górna linijka pokazuje dokładnie to, co słychać
+  (tłumaczenie zatwierdzonego tekstu, lepsze); na dole tylko to, czego lektor jeszcze nie dostał,
+- pokazuj niegotowe napisy — odznacz, a na ekranie zostanie tylko gotowy tekst (nic nie „lata”),
+- wzmacniaj mowę dla rozpoznawania (lekko/średnio/mocno) — ciche głosy w filmie lepiej rozpoznawane;
+  zmienia tylko dźwięk dla rozpoznawania (pasmo mowy ok. 1–2,5 kHz w górę, basy i syk w dół, kompresor),
+  film słyszysz bez zmian,
+- co ile odświeżać napis: od razu / 300 ms / 600 ms / 1 s / tylko zatwierdzony tekst,
+- napisy: nowa linijka po kropce — przy szybkiej rozmowie napis ma ~2 linijki zamiast 5–6,
+- lektor: czytaj po przecinku i kropce — do lektora idzie tylko tekst zatwierdzony przez Google,
+  cięty na przecinku/kropce (awaryjnie co 12 słów albo po pauzie), więc nie miesza dwóch osób w jednej paczce,
+- pokazuj oryginał pod napisem, otwieraj „Napisy na bieżąco” razem z napisami.
+- W dzienniku co 30 s: ile kwestii Google zatwierdził (ile z przecinkiem/kropką), ile paczek lektor przyjął,
+  ile przepadło bez tłumaczenia, stan tłumacza i błędy samego lektora.
+- Tłumacz: lektor ma pierwszeństwo; zepsuty albo zawieszony tłumacz tworzy się sam od nowa.
+
+WAŻNE
+- Wyłącz osobne rozszerzenie „Głos i Napisy (test)”, bo ma te same skróty i łapałoby tę samą kartę.
+- Skróty: chrome://extensions/shortcuts
+- Gdy coś nie działa: popup lektora → „🎙 Głos i napisy” → „⚙ Ustawienia i dziennik” → „📋 Kopiuj dziennik”.
+
+PLIKI (folder glos\)
+glos_bg.js (tło, importowane w service-worker-loader.js), common.js (ustawienia, dziennik, odszumianie),
+glos.html/js (mój głos), karta.html/js (film), overlay.js (napisy na stronie), pill.js (plakietka pisania),
+popup_glos.js (sekcja w popupie lektora), historia.html/js (napisy na bieżąco), dfn\ (DeepFilterNet3 WASM + model, licencje MIT/Apache).

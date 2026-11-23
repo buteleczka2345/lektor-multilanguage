@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<!-- 🎧 Film w karcie → napisy: dźwięk karty (cyfrowo) → (DeepFilterNet3) → Google → tłumacz Chrome → napisy + czytanie -->
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>🎧 Film → napisy</title>
+<style>
+    body { font: 12px/1.35 Arial, sans-serif; background: #1a1d24; color: #eee; margin: 8px; }
+    #state { font-weight: bold; font-size: 13px; margin-bottom: 4px; }
+    .rec { color: #81c784; } .wait { color: #ffd479; } .err { color: #ff9090; }
+    .meter { height: 6px; background: #333; border-radius: 3px; overflow: hidden; margin: 3px 0 5px; }
+    .meter div { height: 100%; width: 0; background: #66bb6a; transition: width .08s; }
+    .info { color: #ce93d8; font-size: 11px; }
+    #subs { background: #263238; border-radius: 5px; padding: 5px 6px; min-height: 48px; margin: 5px 0; white-space: pre-wrap; word-break: break-word; }
+    #pl { color: #ffee58; font-size: 13px; } #en { color: #b3e5fc; font-size: 11px; }
+    #lek { color: #9ccc65; font-size: 11px; white-space: pre-wrap; max-height: 44px; overflow: hidden; }
+    button { width: 100%; background: #4a2a2a; color: #fff; border: 1px solid #555; border-radius: 6px; padding: 5px; font: 12px Arial; cursor: pointer; margin-top: 6px; }
+</style>
+<!-- [AGENT-EXP] 2026-10-21: język interfejsu (PL / EN) -->
+<script src="../assets/i18n_en.js"></script>
+<script src="../assets/i18n.js" data-page></script>
+</head>
+<body>
+<div id="state" class="wait">Uruchamiam…</div>
+<div class="meter"><div id="lvl"></div></div>
+<div class="info" id="src"></div>
+<div class="info" id="dfn"></div>
+<div class="info" id="loc"></div>
+<button id="locBtn" style="display:none;background:#1e3a55;width:100%;margin-top:4px;">⬇ Pobierz lokalny model mowy</button>
+<div class="info" id="trInfo"></div>
+<div id="subs" data-noi18n><div id="pl"></div><div id="en"></div></div>
+<div id="lek" data-noi18n></div>
+<button id="hist" style="background:#24324a;">📜 Napisy na bieżąco (okienko)</button>
+<button id="stop">✕ Zakończ (Alt+Shift+2)</button>
+<script type="module" src="karta.js"></script>
+</body>
+</html>

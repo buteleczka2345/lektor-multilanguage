@@ -1,0 +1,17 @@
+{
+  "extName": {
+    "message": "Multilektor"
+  },
+  "extDesc": {
+    "message": "Polish voice-over for videos: reads subtitles aloud on YouTube, Netflix and more, translates them and lowers the video's sound."
+  },
+  "actionTitle": {
+    "message": "Multilektor — settings"
+  },
+  "cmdGlos": {
+    "message": "My voice → text: start / stop"
+  },
+  "cmdKarta": {
+    "message": "Video in tab → subtitles: start / stop"
+  }
+}

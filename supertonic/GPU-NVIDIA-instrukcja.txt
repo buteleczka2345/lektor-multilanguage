@@ -1,0 +1,104 @@
+﻿JAK NA STAŁE LICZYĆ LEKTORA NA KARCIE NVIDIA (GPU DEDYKOWANA)
+================================================================
+
+Dla laptopów z dwiema kartami, np. AMD Radeon (zintegrowana) + NVIDIA RTX (dedykowana).
+
+
+DLACZEGO TO JEST POTRZEBNE
+--------------------------
+Rozszerzenie może tylko POPROSIĆ Chrome o kartę. Decyduje Chrome. Na Windows
+zwykły Chrome daje kartę zintegrowaną (AMD/Intel), nawet gdy w rozszerzeniu
+wybierzesz "GPU dedykowana". Nie pomaga też ustawienie "Wysoka wydajność"
+w Ustawieniach grafiki Windows (sprawdzone).
+
+Pomaga uruchomienie Chrome z przełącznikiem:
+
+    --force_high_performance_gpu
+
+Zmierzone na tym laptopie (Supertonic 3, 6 polskich zdań, 33,9 s mowy):
+
+    CPU (procesor)              3,40 s na zdanie   ×1,7 szybciej niż czas mowy
+    GPU zintegrowana (AMD)      0,74 s na zdanie   ×7,6
+    GPU dedykowana (NVIDIA)     0,27 s na zdanie   ×21   (prawie 3× szybciej niż AMD)
+
+NVIDIA podczas czytania bierze ok. 23 W (w spoczynku 12-13 W).
+
+
+KROK 1. DOPISZ PRZEŁĄCZNIK DO SKRÓTU CHROME
+-------------------------------------------
+Zrób to w KAŻDYM skrócie, z którego uruchamiasz Chrome.
+
+a) Skrót na pulpicie:
+   1. Kliknij prawym przyciskiem na ikonę Google Chrome na pulpicie -> Właściwości.
+   2. Zakładka "Skrót", pole "Element docelowy". Jest tam np.:
+        "C:\Program Files\Google\Chrome\Application\chrome.exe"
+   3. Kliknij na KONIEC tego pola (za cudzysłowem), dopisz SPACJĘ i przełącznik:
+        "C:\Program Files\Google\Chrome\Application\chrome.exe" --force_high_performance_gpu
+   4. Kliknij OK. Jeśli Windows zapyta o uprawnienia administratora, kliknij "Kontynuuj".
+
+   Jeśli w polu jest już coś za cudzysłowem (np. --profile-directory="Default"),
+   zostaw to i dopisz przełącznik na końcu, po spacji.
+
+b) Ikona przypięta do paska zadań:
+   1. Kliknij prawym przyciskiem na ikonę Chrome na pasku zadań.
+   2. W menu, które się pojawi, kliknij prawym na "Google Chrome" -> Właściwości.
+   3. Dalej tak samo jak w punktach a) 2-4.
+
+c) Skrót w menu Start (opcjonalnie):
+   1. Start -> wpisz "Chrome" -> prawy przycisk na Google Chrome -> "Otwórz lokalizację pliku".
+   2. W otwartym folderze prawy przycisk na "Google Chrome" -> Właściwości.
+   3. Dalej tak samo jak w punktach a) 2-4.
+
+
+KROK 2. ZAMKNIJ CHROME CAŁKOWICIE I URUCHOM GO ZE SKRÓTU
+--------------------------------------------------------
+Przełącznik działa tylko wtedy, gdy Chrome startuje od zera. Zamknięcie okien
+nie wystarczy, jeśli Chrome działa w tle.
+
+   1. Zamknij wszystkie okna Chrome.
+   2. Otwórz Menedżer zadań (Ctrl+Shift+Esc).
+   3. Jeśli na liście nadal jest "Google Chrome": prawy przycisk -> "Zakończ zadanie".
+      Powtarzaj, aż nie zostanie żaden proces Chrome.
+   4. Uruchom Chrome z poprawionego skrótu (pulpit albo pasek zadań).
+
+   Żeby Chrome nie zostawał w tle (zalecane):
+   Chrome -> Ustawienia -> System -> wyłącz
+   "Kontynuuj działanie aplikacji w tle po zamknięciu przeglądarki Google Chrome".
+
+
+KROK 3. WŁĄCZ W ROZSZERZENIU "GPU DEDYKOWANA"
+---------------------------------------------
+   Popup Lektora -> zakładka "Lektor" -> Silnik mowy: "Supertonic 3 (VoxNemesis)"
+   -> Sprzęt: "GPU dedykowana"
+   albo: Ustawienia (⚙️) -> "🗣 Silnik mowy" -> "Supertonic — sprzęt" -> "GPU dedykowana (np. NVIDIA)".
+
+
+KROK 4. SPRAWDŹ, ŻE DZIAŁA
+--------------------------
+   1. Ustawienia (⚙️) -> "🗣 Silnik mowy" -> "▶ Test lektora".
+   2. W statusie powinno być:   Supertonic na GPU (WebGPU) · karta: nvidia · ampere
+      Jeśli jest "amd" albo "intel", Chrome dalej daje kartę zintegrowaną:
+      wróć do kroku 2 (Chrome nie został całkiem zamknięty albo uruchomiłeś
+      go z innego skrótu).
+   3. Dodatkowo: Menedżer zadań -> Wydajność -> "GPU 1 (NVIDIA)".
+      Podczas czytania wykres powinien rosnąć.
+   4. Możesz też wpisać w pasku adresu chrome://gpu i poszukać "NVIDIA".
+
+
+O CZYM PAMIĘTAĆ
+---------------
+ - Przełącznik działa tylko wtedy, gdy Chrome startuje z poprawionego skrótu.
+   Gdy Chrome był zamknięty i otworzysz go klikając link w innym programie
+   (np. w mailu albo komunikatorze), wystartuje BEZ przełącznika i znowu użyje AMD.
+   Wtedy zamknij go całkiem i otwórz ze skrótu.
+ - Aktualizacje Chrome nie usuwają przełącznika ze skrótu.
+ - Na zasilaczu NVIDIA działa najszybciej. Na baterii zużywa więcej prądu niż
+   AMD. Jeśli wolisz oszczędzać baterię, wybierz w rozszerzeniu "GPU zintegrowana".
+ - Edge: to samo działa ze skrótem do msedge.exe
+   ("C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --force_high_performance_gpu).
+
+
+JAK TO COFNĄĆ
+-------------
+   Usuń " --force_high_performance_gpu" z pola "Element docelowy" w skrótach
+   i uruchom Chrome ponownie. W rozszerzeniu wybierz CPU albo GPU zintegrowana.
