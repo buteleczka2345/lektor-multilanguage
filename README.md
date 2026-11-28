@@ -1,4 +1,4 @@
-# Multilektor 3.7.0
+# Multilektor 3.7.3
 
 Rozszerzenie do przeglądarek Chrome / Edge (Manifest V3), które **czyta napisy z filmów i seriali głosem lektora** (text-to-speech), dzięki czemu możesz słuchać tłumaczenia zamiast go czytać na ekranie.
 
@@ -94,5 +94,5 @@ Projekt udostępniany jest na licencji LICENSE (plik w repozytorium). Możesz go
 ---
 
 **Autor:** buteleczka2345  
-**Wersja:** 3.7.0  
+**Wersja:** 3.7.3  
 **Repozytorium:** https://github.com/buteleczka2345/lektor-multilanguage
