@@ -250,6 +250,11 @@
   }
   const noHash = function (u) { const i = u.indexOf('#'); return i === -1 ? u : u.slice(0, i); };
   function sameOrigin(u) { try { return new URL(u, W.location.href).origin === W.location.origin; } catch (e) { return false; } }
+  // [FIX 2026-11-25] ten sam adres strony (pochodzenie + ścieżka), bez względu na parametry — np. /watch/81943171?trackId=…
+  function samePagePath(u) {
+    try { const a = new URL(u, W.location.href), b = new URL(W.location.href); return a.origin === b.origin && a.pathname.replace(/\/+$/, '') === b.pathname.replace(/\/+$/, ''); }
+    catch (e) { return false; }
+  }
   function shortUrl(u, max) {
     try {
       if (/^blob:/.test(u)) return 'blob (pamięć przeglądarki)';
@@ -1460,6 +1465,7 @@
     if (info.label && !it.label) it.label = String(info.label).replace(/\s+/g, ' ').trim().slice(0, 70);
     if (info.auto) it.auto = true;
     if (info.forced) it.forced = true;
+    if (info.isTrack) it.isTrack = true;   // [AGENT-EXP] 2026-11-25: <track> w kodzie strony — etykieta „Ścieżka odtwarzacza”
     if (info.strong || hasCues) it.strong = true;
     if (info.kind) it.kind = info.kind;
     if (info.note && !it.note) it.note = info.note;
@@ -1567,6 +1573,9 @@
     if (m.kind && RX.badKind.test(m.kind)) return 0;
     const abs = toAbs(s, o.base);
     if (!abs || abs === noHash(W.location.href)) return 0;
+    // [FIX 2026-11-25] słaby trop wskazujący na samą stronę z filmem (inne parametry, ta sama ścieżka) to nie napisy —
+    // np. konfiguracja Immersive Translate „imt-subtitle-warm-rule-v1” w localStorage Netflixa (adres /watch/…).
+    if (!strong && samePagePath(abs)) return 0;
     return addItem({ url: abs, layer: layer, strong: strong, weakOk: true, lang: m.lang, label: m.label || (strong ? '' : cur.path.split('.').slice(-2).join('.')), auto: m.auto }) ? 1 : 0;
   }
   /*
@@ -2730,6 +2739,7 @@
     let els; try { els = root.querySelectorAll('*'); } catch (e) { return out; }
     for (let i = 0; i < els.length; i++) {
       const el = els[i]; let sr = null;
+      if (el === uiHost) continue;   // [FIX 2026-11-25] nie przeszukuj własnego panelu (gdy jego Shadow DOM jest otwarty)
       try { sr = el.shadowRoot || closedRoots.get(el) || null; } catch (e) {}
       if (sr) collectRoots(sr, out, seen);
       const tn = el.tagName;
@@ -2757,6 +2767,7 @@
   function each(root, sel, fn) { let l; try { l = root.querySelectorAll(sel); } catch (e) { return; } for (let i = 0; i < l.length; i++) { try { fn(l[i]); } catch (e) {} } }
   function inspectAttrs(el, layer) {
     if (attrsSeen.has(el)) return; attrsSeen.add(el);
+    if (uiHost && (el === uiHost || uiHost.contains(el))) return;   // [FIX 2026-11-25] własny panel (podpowiedzi przycisków zawierają adresy plików)
     const at = el.attributes; if (!at) return;
     for (let i = 0; i < at.length; i++) {
       const n = at[i].name; if (!(n.indexOf('data-') === 0 && n.length >= 6) && !GEN_ATTR[n]) continue;
@@ -2778,7 +2789,7 @@
       if (media.size) each(root, KNOWN_CAP, function (el) { const r = captionRootFor(el); if (r && overlapsMedia(r)) noteCapRoot(r); });
       each(root, 'track', function (el) {
         const src = el.getAttribute('src'); const kind = (el.getAttribute('kind') || 'subtitles').toLowerCase();
-        if (src) addItem({ url: src, base: el.baseURI, layer: layer, strong: true, kindAttr: kind, lang: el.getAttribute('srclang') || '', label: el.getAttribute('label') || '' });
+        if (src) addItem({ url: src, base: el.baseURI, layer: layer, strong: true, kindAttr: kind, lang: el.getAttribute('srclang') || '', label: el.getAttribute('label') || '', isTrack: true });
       });
       each(root, LINK_SEL, function (a) {
         const href = a.getAttribute('href');
@@ -3329,12 +3340,14 @@
     if (f === 'json') { if (!RX.jsonHint.test(s)) return 0; let obj = null; try { obj = O.jsonParse(s); } catch (e) {} return obj ? analyzeObject(obj, layer, { name: name, maxNodes: 6000, budget: 12 }) : 0; }
     return extractUrlsFromText(s, layer);
   }
+  // [FIX 2026-11-25] klucze innych rozszerzeń (Immersive Translate: „imt-…”) — ich ustawienia, nie napisy filmu
+  const RX_FOREIGN_KEY = /^(?:imt[-_]|immersive[-_]?translate)/i;
   function scanWebStorage() {
     ['localStorage', 'sessionStorage'].forEach(function (nm) {
       guard(function () {
         const st = W[nm]; if (!st) return;
         const n = Math.min(st.length, 400);
-        for (let i = 0; i < n; i++) { const k = st.key(i); if (k == null) continue; let v = null; try { v = st.getItem(k); } catch (e) {} if (v) inspectLoose(v, 'Storage', nm + '.' + k); }
+        for (let i = 0; i < n; i++) { const k = st.key(i); if (k == null || RX_FOREIGN_KEY.test(k)) continue; let v = null; try { v = st.getItem(k); } catch (e) {} if (v) inspectLoose(v, 'Storage', nm + '.' + k); }
       });
     });
   }
@@ -3634,10 +3647,18 @@
   }
 
   const RAW_EXT = dict({ vtt: 'vtt', srt: 'srt', ttml: 'ttml', xml: 'xml', json: 'json', json3: 'json', 'yt-transcript': 'json', sbv: 'sbv', ass: 'ass', lrc: 'lrc', sami: 'smi', srv1: 'xml', srv3: 'xml', scc: 'scc', stl: 'stl', cea608: 'txt', cea708: 'txt' });
-  function fileName(it, ext) {
+  // [AGENT-EXP] 2026-11-25: w nazwie pliku widać pochodzenie — „[z ekranu]” albo „[plik en, etykieta]”,
+  // żeby w folderze Pobrane odróżnić zapis z ekranu od plików z sieci (było: „Tytuł.en.srt” i „Tytuł.ekran.srt”).
+  function safeName(s, max) { return String(s || '').replace(/[\\/:*?"<>|\[\]\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max || 90); }
+  function fileName(it, ext, screen) {
     let t = ''; try { t = (W.top === W ? doc.title : '') || doc.title || HOST; } catch (e) { t = doc.title || HOST; }
-    t = String(t).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').replace(/ - YouTube$/, '').trim().slice(0, 90) || 'napisy';
-    return t + (it && it.lang ? '.' + it.lang : '') + '.' + ext;
+    t = safeName(String(t).replace(/ - YouTube$/, ''), 90) || 'napisy';
+    if (screen) return t + ' [z ekranu].' + ext;
+    if (!it) return t + '.' + ext;
+    const bits = [it.lang ? 'plik ' + it.lang : 'plik'];
+    const lb = safeName(it.label, 32);
+    if (lb && lb.toLowerCase() !== String(it.lang || '').toLowerCase() && !/^<track>$/i.test(lb)) bits.push(lb);
+    return t + ' [' + bits.join(', ') + '].' + ext;
   }
   let dlRoot = null;
   function saveFile(name, text, ext) {
@@ -3686,7 +3707,7 @@
     const b = bestItem();
     if (b) return downloadItem(b, 'srt');
     const l = liveCues();
-    if (l.cues.length) { const name = fileName(null, 'srt'); saveFile(name, toSRT(l.cues), 'srt'); toast('Pobrano zapis z ekranu: ' + name); return Promise.resolve(true); }
+    if (l.cues.length) { const name = fileName(null, 'srt', true); saveFile(name, toSRT(l.cues), 'srt'); toast('Pobrano zapis z ekranu: ' + name); return Promise.resolve(true); }
     return downloadItem(null);
   }
   async function copyCurrent() {
@@ -3913,10 +3934,28 @@
     '.acts.tail{padding:2px 2px 10px;border-bottom:1px solid var(--line)}',
     '.hl{position:fixed;z-index:2147483646;display:none;pointer-events:none;border:2px solid var(--sub);border-radius:6px;box-shadow:0 0 0 3px rgba(0,0,0,.55),0 0 22px rgba(255,216,74,.65)}.hl.show{display:block}',
     '.toast{position:fixed;z-index:2147483647;right:18px;bottom:82px;max-width:340px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:8px 11px;font-size:12.5px;line-height:1.4;box-shadow:0 10px 30px rgba(0,0,0,.5);display:none}',
-    '.toast.show{display:block}.toast.err{color:var(--err)}'
+    '.toast.show{display:block}.toast.err{color:var(--err)}',
+    /* [AGENT-EXP] 2026-11-25: podgląd treści, pochodzenie, zgodność z ekranem, sekcja „Z ekranu” */
+    '.grp{display:flex;align-items:center;gap:8px;padding:12px 2px 2px;color:var(--ink);font-weight:650;font-size:12.5px}.grp>span{flex:1}',
+    '.ghint{padding:0 2px 6px;color:var(--mute);font-size:11.5px;line-height:1.4}',
+    '.screen{margin:6px 0 2px;padding:8px 10px 4px;border:1px solid var(--go2);border-radius:8px;background:#0c1d16}',
+    '.screen .name{color:var(--sub)}',
+    '.screen .acts{margin:4px 0 4px}',
+    '.origin{font-size:11px;font-weight:650;border-radius:4px;padding:1px 6px;line-height:1.5;border:1px solid var(--line);background:#0b1a14;color:var(--ink)}',
+    '.match{font-size:11px;font-weight:700;border-radius:4px;padding:1px 6px;line-height:1.5}',
+    '.match.ok{background:#166534;color:#dcfce7}.match.mid{background:#854d0e;color:#fef3c7}.match.no{background:#3f3f46;color:#e4e4e7}.match.unk{background:none;border:1px dashed var(--line);color:var(--mute);font-weight:500}',
+    '.pv{margin:2px 0 8px;padding:6px 8px;background:#050b08;border:1px solid var(--line);border-radius:6px;font-size:12px;line-height:1.4;max-height:260px;overflow:auto}',
+    '.pv.err{color:var(--err)}',
+    '.ph{color:var(--mute);font-size:11.5px;margin-bottom:4px}',
+    '.pc{display:flex;gap:8px;padding:1px 3px;border-radius:3px}.pt{color:var(--mute);font:11.5px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;flex:none;min-width:52px}.px{white-space:pre-line;color:var(--ink)}',
+    '.pc.now{background:rgba(255,216,74,.14)}.pc.now .px{color:var(--sub)}',
+    '.raw{white-space:pre-wrap;word-break:break-word;font:11.5px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--mute)}',
+    '.b.on{border-color:var(--sub);color:var(--sub)}',
+    '.b.link{background:none;border:1px dashed var(--line);color:var(--mute);width:100%;margin:6px 0 4px}'
   ].join('\n');
 
-  const ui = { built: false, host: null, root: null, wrap: null, fab: null, badge: null, panel: null, open: false, els: {}, lastCount: 0, toastTimer: 0, swallow: false };
+  const ui = { built: false, host: null, root: null, wrap: null, fab: null, badge: null, panel: null, open: false, els: {}, lastCount: 0, toastTimer: 0, swallow: false,
+    pvOpen: new Set(), pvState: new Map(), screenPv: false, showWeak: false, techOpen: !!gm.get('ush_tech_open', false) };   // [AGENT-EXP] 2026-11-25: podglądy i zwinięte sekcje
 
   function h(tag, attrs) {
     const el = doc.createElement(tag);
@@ -3980,10 +4019,19 @@
     E.liveSrc = h('div', { class: 'livesrc' });
     E.list = h('div', { class: 'list' });
     E.sec = h('div', { class: 'sec' });
-    E.recText = h('span');
-    E.rec = h('div', { class: 'rec' }, E.recText,
+    // [AGENT-EXP] 2026-11-25: „Z ekranu” to osobna, wyraźna sekcja na górze listy (była: wąski pasek „Zapis z ekranu” na dole)
+    // — z podglądem ostatnich napisów i źródłem; pliki z sieci są niżej, osobno.
+    E.recText = h('span', { class: 'meta' });
+    E.screenSrc = h('div', { class: 'smeta' });
+    E.screenPvBtn = btn('Podgląd', 'Pokaż ostatnie napisy, które pojawiły się na ekranie (z czasami)', function () { ui.screenPv = !ui.screenPv; renderScreen(true); });
+    E.screenActs = h('div', { class: 'acts' }, E.screenPvBtn,
       btn('Kopiuj zapis', 'Skopiuj wszystko, co do tej pory pokazało się na ekranie', function () { const l = liveCues(); if (!l.cues.length) return toast('Zapis z ekranu jest jeszcze pusty.', true); copyText(toTXT(l.cues)).then(function (ok) { toast(ok ? 'Skopiowano zapis z ekranu (' + plKw(l.cues.length) + ').' : 'Przeglądarka zablokowała schowek.'); }); }),
-      btn('Pobierz .srt', 'Zapisz to, co pokazało się na ekranie, jako plik .srt z czasami', function () { const l = liveCues(); if (!l.cues.length) return toast('Zapis z ekranu jest jeszcze pusty.', true); const name = fileName(null, 'ekran.srt'); saveFile(name, toSRT(l.cues), 'srt'); toast('Pobrano: ' + name); }));
+      btn('Pobierz .srt', 'Zapisz to, co pokazało się na ekranie, jako plik .srt z czasami (w nazwie: [z ekranu])', function () { const l = liveCues(); if (!l.cues.length) return toast('Zapis z ekranu jest jeszcze pusty.', true); const name = fileName(null, 'srt', true); saveFile(name, toSRT(l.cues), 'srt'); toast('Pobrano: ' + name); }),
+      btn('.txt', 'Zapisz sam tekst z ekranu, bez czasów (w nazwie: [z ekranu])', function () { const l = liveCues(); if (!l.cues.length) return toast('Zapis z ekranu jest jeszcze pusty.', true); const name = fileName(null, 'txt', true); saveFile(name, toTXT(l.cues), 'txt'); toast('Pobrano: ' + name); }));
+    E.screenPv = h('div', { class: 'pv' });
+    E.rec = h('div', { class: 'screen' },
+      h('div', { class: 'r1' }, h('span', { class: 'name', text: '🖥 Z ekranu — to, co widać w filmie' }), E.recText),
+      E.screenSrc, E.screenActs, E.screenPv);
     E.status = h('div', { class: 'status', role: 'status' });
     // [AGENT-EXP] 🔋 tryb oszczędny — wiersz widoczny, gdy Łowca przestał szukać
     E.ecoText = h('span');
@@ -3998,7 +4046,7 @@
       h('div', { class: 'quick' },
         btn('Pobierz najlepsze .srt', 'Pobierz najlepiej dopasowane napisy jako .srt (Alt+P)', downloadBest, 'go'),
         btn('Kopiuj napis z ekranu', 'Skopiuj napis widoczny teraz w filmie (Alt+K)', copyCurrent, 'wide')),
-      E.sec, E.list, E.rec, E.eco,
+      E.sec, E.list, E.eco,
       h('div', { class: 'foot' },
         btn('Skanuj ponownie', 'Przeszukaj jeszcze raz stronę, odtwarzacz i obiekty window', function () { scanAll(true, true); toast('Przeskanowano stronę ponownie.'); }),
         btn('Głęboki skan', 'Przejrzyj też localStorage, Cache Storage i IndexedDB', function () { toast('Przeglądam magazyny przeglądarki…'); deepScan().then(function (n) { toast('Głęboki skan zakończony. Nowych znalezisk: ' + n + '.'); }); }),
@@ -4007,7 +4055,7 @@
         ocrLangSelect(),
         btn('Ramka OCR', 'Ustaw, którą część obrazu czyta OCR (przesuń / zmień rozmiar ramki nad filmem). Zapisuje się dla tej strony.', ocrFrameEdit),
         btn('Raport w konsoli', 'Wypisz w konsoli (F12), w której warstwie znaleziono napisy', function () { consoleReport(); toast('Raport wypisany w konsoli (F12).'); }),
-        btn('Wyczyść', 'Opróżnij listę i zapis z ekranu', function () { resetStore(); toast('Wyczyszczono.'); }),
+        btn('Wyczyść', 'Opróżnij listę i zapis z ekranu', function () { resetStore(); ui.pvOpen.clear(); ui.pvState.clear(); ui.screenPv = false; ui.sig = null; renderPanel(); renderLive(); toast('Wyczyszczono.'); }),
         btn('Sesja: start/stop', 'Włącz/wyłącz łowienie na żądanie (bez ciągłego nasłuchu)', function () { if (SESJA) { stopSession(); toast('Sesja zatrzymana — zero nasłuchu.'); } else { ecoWake('ręcznie', eco.parked); toast('Sesja uruchomiona — skanuję stronę.'); } }),
         E.ecoBtn),
       E.status);
@@ -4088,9 +4136,150 @@
     else { E.live.textContent = media.size ? 'Tu pojawi się napis, gdy odtwarzacz go wyświetli.' : 'Na tej stronie nie widzę jeszcze odtwarzacza.'; E.live.className = 'live empty'; }
     E.liveSrc.textContent = t ? liveSourceLabel() : ((ocr.on || ocr.loading) ? 'OCR: ' + ocr.status : '');
     containers.forEach(function (c) { if (c.ui && c.ui.meta) c.ui.meta.textContent = containerMeta(c); });
-    const n = liveCount();
-    E.rec.style.display = n ? '' : 'none';
-    E.recText.textContent = 'Zapis z ekranu: ' + plKw(n);
+    renderScreen(false);
+  }
+
+  /* ── [AGENT-EXP] 2026-11-25: sekcja „Z ekranu”, podgląd treści, pochodzenie i zgodność z ekranem ── */
+  function clock(sec) {
+    sec = Math.max(0, Math.floor(+sec || 0));
+    const hh = Math.floor(sec / 3600), mm = Math.floor(sec % 3600 / 60), ss = sec % 60;
+    return (hh ? hh + ':' + pad(mm, 2) : String(mm)) + ':' + pad(ss, 2);
+  }
+  function liveBestSrc() { let bn = -1, name = ''; for (const k in live.ch) { const c = live.ch[k]; const n = c.cues.length + (c.cur ? 1 : 0); if (n > bn) { bn = n; name = k; } } return name; }
+  function screenSourceText() {
+    const src = liveBestSrc(); const og = live.origin[src] || {}; const ch = live.ch[src];
+    const what = src === 'Mutation' ? 'element strony ' + (og.key || og.selector || '')
+      : src === 'TextTrack' ? 'ścieżka odtwarzacza' + (og.track ? ' „' + og.track + '”' : '')
+      : src === 'OCR' ? 'OCR (odczyt z obrazu)' : src === 'Canvas' ? 'tekst rysowany na <canvas>'
+      : src === 'ARIA' ? 'region ARIA nad wideo' : src === 'Speech' ? 'rozpoznawanie mowy strony' : (src || '?');
+    let span = '';
+    if (ch) { const first = ch.cues[0] || ch.cur, lastC = ch.cur || ch.cues[ch.cues.length - 1]; if (first && lastC) span = ' · ' + clock(first.start) + ' – ' + clock(lastC.end || lastC.start); }
+    return 'Odczytane z: ' + what + span;
+  }
+  let screenSig = '';
+  function renderScreen(force) {
+    if (!ui.built || !ui.open) return;
+    const E = ui.els; const n = liveCount();
+    E.recText.textContent = n ? plKw(n) : '';
+    E.screenActs.style.display = n ? '' : 'none';
+    E.screenSrc.textContent = n ? screenSourceText() : 'Jeszcze nic nie zapisałem. Włącz napisy w odtwarzaczu i puść film — tu zbiera się to, co naprawdę wyświetla się w filmie.';
+    E.screenPvBtn.textContent = ui.screenPv ? 'Schowaj podgląd' : 'Podgląd';
+    E.screenPvBtn.classList.toggle('on', ui.screenPv);
+    const sig = (ui.screenPv ? 1 : 0) + ':' + n;
+    if (!force && sig === screenSig) return;
+    screenSig = sig;
+    const pv = E.screenPv;
+    while (pv.firstChild) pv.removeChild(pv.firstChild);
+    pv.style.display = ui.screenPv && n ? '' : 'none';
+    if (ui.screenPv && n) cuesPreview(pv, liveCues().cues, 'screen');
+  }
+  // Kilka kwestii z czasami. Plik: fragment przy bieżącym miejscu filmu (żółte = teraz), bez filmu — początek.
+  // Ekran: ostatnie napisy. Tekst napisów ma data-noi18n — tłumacz interfejsu go nie rusza.
+  function cuesPreview(box, cues, mode) {
+    const N = 8, last = cues.length - 1;
+    if (last < 0) { box.appendChild(h('div', { class: 'ph', text: 'Brak kwestii.' })); return box; }
+    let from = 0, nowIdx = -1, where = 'początek pliku';
+    const t = media.size ? mediaTime() : -1;
+    if (mode === 'screen') { from = Math.max(0, cues.length - N); where = 'ostatnie napisy z ekranu'; }
+    else if (t > 0.5) {
+      let i = 0; while (i <= last && cues[i].end < t) i++;
+      if (i > last) from = Math.max(0, cues.length - N);
+      else { if (cues[i].start <= t) nowIdx = i; from = Math.max(0, Math.min(i - 2, cues.length - N)); }
+      where = 'fragment przy ' + clock(t) + ' filmu' + (nowIdx >= 0 ? ' (żółte = teraz)' : '');
+    }
+    box.appendChild(h('div', { class: 'ph', text: 'Razem ' + plKw(cues.length) + ' (' + clock(cues[0].start) + ' – ' + clock(cues[last].end) + ') · ' + where }));
+    if (from > 0) box.appendChild(h('div', { class: 'ph', text: '… wcześniej: ' + plKw(from) }));
+    for (let i = from; i <= last && i < from + N; i++) {
+      const c = cues[i];
+      box.appendChild(h('div', { class: 'pc' + (i === nowIdx ? ' now' : '') }, h('span', { class: 'pt', text: clock(c.start) }), h('span', { class: 'px', 'data-noi18n': '', text: c.text })));
+    }
+    const rest = last - (from + N - 1);
+    if (rest > 0) box.appendChild(h('div', { class: 'ph', text: '… dalej: ' + plKw(rest) }));
+    return box;
+  }
+  function previewEl(it) {
+    const box = h('div', { class: 'pv' });
+    const st = ui.pvState.get(it.id);
+    if (st && st.loading) { box.appendChild(h('div', { class: 'ph', text: 'Wczytuję treść…' })); return box; }
+    if (st && st.err) { box.className = 'pv err'; box.textContent = 'Nie udało się wczytać: ' + st.err; return box; }
+    if (it.cues && it.cues.length) return cuesPreview(box, it.cues, 'file');
+    if (it.text != null && String(it.text).trim()) {
+      box.appendChild(h('div', { class: 'ph', text: 'Nie rozpoznałem kwestii z czasami — początek treści:' }));
+      box.appendChild(h('div', { class: 'raw', 'data-noi18n': '', text: String(it.text).slice(0, 700) + (it.text.length > 700 ? '…' : '') }));
+      return box;
+    }
+    box.className = 'pv err'; box.textContent = 'Brak treści — to tylko adres, którego nie udało się odczytać.';
+    return box;
+  }
+  function togglePreview(it) {
+    if (ui.pvOpen.has(it.id)) ui.pvOpen.delete(it.id);
+    else {
+      ui.pvOpen.add(it.id);
+      const ready = (it.cues && it.cues.length) || (it.text != null && !it.url && it.kind !== 'hls');
+      const st = ui.pvState.get(it.id);
+      if (!ready && !(st && st.loading)) {
+        ui.pvState.set(it.id, { loading: true });
+        ensureCues(it).then(function () { ui.pvState.delete(it.id); }, function (e) { ui.pvState.set(it.id, { err: errMsg(e) }); })
+          .then(function () { ui.sig = null; guard(renderPanel); });
+      }
+    }
+    ui.sig = null; renderPanel();
+  }
+  // Pochodzenie znaleziska po ludzku: [ikona, nazwa, wyjaśnienie]
+  function originOf(it) {
+    const L = it.layers;
+    const has = function () { for (let i = 0; i < arguments.length; i++) if (L.has(arguments[i])) return true; return false; };
+    if (has('OCR', 'Canvas', 'Speech')) return ['🖥', 'Odczytane z obrazu', 'Tekst odczytany z tego, co widać na ekranie (OCR, rysunek na <canvas>, rozpoznawanie mowy) — nie gotowy plik.'];
+    if (has('TextTrack') || it.isTrack) return ['🎞', 'Ścieżka odtwarzacza', 'Ścieżka napisów podpięta do wideo (<track> / TextTrack) — zwykle ta sama, którą wybierasz w menu napisów odtwarzacza.'];
+    if (has('CC', 'MKV', 'TS', 'MP4')) return ['🎬', 'Ukryte w strumieniu wideo', 'Napisy zaszyte w samym strumieniu wideo (napisy zamknięte CEA-608/708, MKV, MP4).'];
+    if (has('Fetch', 'XHR', 'Performance', 'Cache', 'HLS', 'DASH', 'Blob', 'WebSocket', 'SSE', 'Worker', 'ServiceWorker', 'TextDecoder', 'Beacon', 'WebRTC') || it.kind === 'hls' || it.kind === 'segments')
+      return ['🌐', 'Plik z sieci', 'Gotowy plik napisów, który odtwarzacz ściągnął z serwera — pełne napisy filmu, niezależnie od tego, co jest teraz na ekranie.'];
+    if (has('Window', 'JSON.parse', 'postMessage', 'Extension', 'BroadcastChannel', 'MessagePort', 'WASM', 'Base64', 'TextEncoder'))
+      return ['🧩', 'Dane odtwarzacza', 'Znalezione w danych odtwarzacza na stronie (zmienne, konfiguracja, wiadomości między skryptami).'];
+    if (has('Storage', 'IndexedDB', 'Cookie', 'OPFS', 'History', 'Okno'))
+      return ['💾', 'Pamięć przeglądarki', 'Znalezione w pamięci strony (localStorage, IndexedDB, ciasteczka) — bywa stare albo nie z tego filmu.'];
+    if (has('DOM', 'ShadowDOM', 'CSS', 'ARIA', 'Mutation'))
+      return ['📄', 'Adres w kodzie strony', 'Adres pliku napisów wpisany w kod strony — przeglądarka mogła go jeszcze nie pobrać.'];
+    return ['❔', 'Inne źródło', ''];
+  }
+  // Porównanie pliku z napisami zapisanymi z ekranu: ile napisów z ekranu występuje w pliku.
+  const RX_NONWORD = /[^\p{L}\p{N}]+/gu;
+  function normT(s) { return String(s || '').toLowerCase().replace(/<[^>]+>/g, '').replace(RX_NONWORD, ''); }
+  let scrCache = { n: -1, list: [] };
+  function screenLines() {
+    let n = 0; for (const k in live.ch) n += live.ch[k].cues.length + (live.ch[k].cur ? 1 : 0);
+    if (n === scrCache.n) return scrCache.list;
+    const seen = new Map();
+    for (const k in live.ch) {
+      const c = live.ch[k]; const arr = c.cur ? c.cues.concat([c.cur]) : c.cues;
+      for (let i = Math.max(0, arr.length - 400); i < arr.length; i++) {
+        const lines = String(arr[i].text || '').split('\n').map(normT).filter(function (x) { return x.length >= 3; });
+        if (lines.join('').length >= 6) seen.set(lines.join('|'), lines);
+      }
+    }
+    scrCache = { n: n, list: Array.from(seen.values()).slice(-300) };
+    return scrCache.list;
+  }
+  const hayMemo = new WeakMap(), matchMemo = new WeakMap();
+  function screenMatch(it, sc) {
+    const mm = matchMemo.get(it);
+    if (mm && mm.sc === sc && mm.cues === it.cues) return mm.r;
+    let hay = hayMemo.get(it.cues);
+    if (!hay) { hay = '\u0001' + it.cues.map(function (c) { return normT(c.text); }).join('\u0001') + '\u0001'; hayMemo.set(it.cues, hay); }
+    let hit = 0;
+    for (let i = 0; i < sc.length; i++) { const ls = sc[i]; let ok = true; for (let j = 0; j < ls.length && ok; j++) if (hay.indexOf(ls[j]) === -1) ok = false; if (ok) hit++; }
+    const r = { pct: Math.round(hit * 100 / sc.length), hit: hit, of: sc.length };
+    matchMemo.set(it, { sc: sc, cues: it.cues, r: r });
+    return r;
+  }
+  function matchChip(it) {
+    const sc = screenLines(); if (sc.length < 3) return null;
+    if (!it.cues || !it.cues.length) return h('span', { class: 'match unk', text: '? nie porównane', title: 'Kliknij „Podgląd” — wczytam plik i porównam go z napisami z ekranu.' });
+    const m = screenMatch(it, sc);
+    const tip = m.hit + ' z ' + m.of + ' napisów z ekranu jest w tym pliku.';
+    if (m.pct >= 60) return h('span', { class: 'match ok', text: '✓ to samo, co na ekranie (' + m.pct + '%)', title: tip + ' To te napisy wyświetla teraz film.' });
+    if (m.pct >= 20) return h('span', { class: 'match mid', text: '≈ częściowo jak na ekranie (' + m.pct + '%)', title: tip + ' Podobne, ale nie te same (np. wersja z opisami dźwięków albo inny przekład).' });
+    return h('span', { class: 'match no', text: '✗ inne niż na ekranie', title: tip + ' Inny język, inna wersja albo inny film (np. zwiastun w tle).' });
   }
   const uiLive = throttle(function () { if (!ui.built || ui.fab.classList.contains('idle') || ui.host.style.display === 'none') refreshUI(); renderLive(); }, 120);
   function itemRow(it, isBest) {
@@ -4101,9 +4290,14 @@
     if (cues) meta.push(plKw(cues)); else if (it.kind === 'hls') meta.push(it.segments ? it.segments + ' segm. w buforze' : 'do złożenia'); else if (!it.verified) meta.push(it.strong ? 'do pobrania' : 'niepotwierdzone');
     if (it.auto) meta.push('automatyczne');
     const r2 = h('div', { class: 'r2' });
+    const og = originOf(it);   // [AGENT-EXP] 2026-11-25: skąd to jest — po ludzku, plus zgodność z ekranem
+    r2.appendChild(h('span', { class: 'origin', text: og[0] + ' ' + og[1], title: og[2] }));
+    const mc = matchChip(it); if (mc) r2.appendChild(mc);
     it.layers.forEach(function (l) { const t = h('span', { class: 'tag', text: l, title: 'Warstwa, w której znaleziono te napisy' }); t.style.background = LAYER_COLOR[l] || '#334155'; r2.appendChild(t); });
     r2.appendChild(h('span', { class: 'url', text: it.url ? shortUrl(it.url, 64) : 'treść w pamięci', title: it.url || it.note || '' }));
+    const pvOn = ui.pvOpen.has(it.id);
     const acts = h('div', { class: 'acts' },
+      btn(pvOn ? 'Schowaj podgląd' : 'Podgląd', 'Pokaż, co jest w środku: kilka kwestii z czasami (przy bieżącym miejscu filmu). Jeśli plik nie był jeszcze pobrany — pobiorę go.', function () { togglePreview(it); }, 's' + (pvOn ? ' on' : '')),
       btn('.srt', 'Pobierz jako SubRip (.srt)', function () { downloadItem(it, 'srt'); }),
       btn('.vtt', 'Pobierz jako WebVTT (.vtt)', function () { downloadItem(it, 'vtt'); }),
       btn('.txt', 'Pobierz sam tekst, bez numerów i czasów', function () { downloadItem(it, 'txt'); }),
@@ -4123,7 +4317,7 @@
       it.url && !/^(blob|data):/.test(it.url) ? btn('Kopiuj adres', it.url, function () { copyText(it.url).then(function (ok) { toast(ok ? 'Skopiowano adres pliku.' : 'Przeglądarka zablokowała schowek.'); }); }) : null);
     return h('div', { class: 'it' + (it.strong ? '' : ' weak') },
       h('div', { class: 'r1' }, h('span', { class: 'lang', text: (it.lang || '··').slice(0, 5) }), h('span', { class: 'name', text: name, title: name }), h('span', { class: 'meta', text: meta.join(', ') })),
-      r2, acts);
+      r2, acts, pvOn ? previewEl(it) : null);
   }
   function decodeURIComponentSafe(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
   function copyAndSay(text, okMsg) { copyText(text).then(function (ok) { toast(ok ? okMsg : 'Przeglądarka zablokowała schowek.', !ok); }); }
@@ -4131,8 +4325,12 @@
   function sourcesBlock() {
     const box = h('div', { class: 'srcs' });
     const cs = Array.from(containers.values()), ts = trackSources();
-    box.appendChild(h('div', { class: 'sec in row' }, h('span', { text: 'Skąd idą napisy na ekranie' }),
+    // [AGENT-EXP] 2026-11-25: sekcja techniczna (selektory, kod dla skryptów) — na dole i domyślnie zwinięta
+    const cnt = cs.length + ts.length;
+    box.appendChild(h('div', { class: 'grp' }, h('span', { text: '⚙ Skąd idą napisy na ekranie — dla skryptów' + (cnt ? ' (' + cnt + ')' : '') }),
+      btn(ui.techOpen ? 'Schowaj' : 'Pokaż', 'Element strony / ścieżka, z których czytany jest napis na ekranie: selektor CSS i gotowy kod do innych skryptów', function () { ui.techOpen = !ui.techOpen; gm.set('ush_tech_open', ui.techOpen); ui.sig = null; renderPanel(); }),
       btn('Kopiuj wszystkie źródła', 'Skopiuj jako JSON: kontenery, ścieżki tekstowe i pliki — do wklejenia w innym skrypcie', function () { copyAndSay(JSON.stringify(sourcesExport(), null, 2), 'Skopiowano opis wszystkich źródeł (JSON).'); })));
+    if (!ui.techOpen) return box;
     if (!cs.length && !ts.length) {
       box.appendChild(h('div', { class: 'empty-list', text: 'Jeszcze nie widziałem napisu na ekranie. Włącz napisy i puść film — pokażę tu element strony, w którym się wyświetlają.' }));
       return box;
@@ -4166,7 +4364,9 @@
   function renderPanel() {
     if (!ui.built || !ui.open) return;
     const E = ui.els; const items = sortedItems(); const fr = framesTotal();
-    const sig = items.slice(0, 40).map(function (it) { return it.id + ':' + (it.cues ? it.cues.length : 0) + ':' + it.layers.size + ':' + it.format + ':' + it.lang + ':' + it.segments + ':' + (it.verified ? 1 : 0); }).join('|') + '#' + fr + '#' + Array.from(containers.keys()).join('|') + '#' + trackSources().map(function (t) { return t.index + t.mode + t.label + t.live; }).join('|') + '#' + (pinState.on ? 1 : 0);   // [AGENT-EXP] 2026-11-06: stan 📌 odświeża panel
+    const sig = items.slice(0, 80).map(function (it) { return it.id + ':' + (it.cues ? it.cues.length : 0) + ':' + it.layers.size + ':' + it.format + ':' + it.lang + ':' + it.segments + ':' + (it.verified ? 1 : 0); }).join('|') + '#' + fr + '#' + Array.from(containers.keys()).join('|') + '#' + trackSources().map(function (t) { return t.index + t.mode + t.label + t.live; }).join('|') + '#' + (pinState.on ? 1 : 0)   // [AGENT-EXP] 2026-11-06: stan 📌 odświeża panel
+      // [AGENT-EXP] 2026-11-25: podglądy, zwinięte sekcje i zgodność z ekranem (co 4 nowe napisy z ekranu)
+      + '#' + Array.from(ui.pvOpen).join(',') + ':' + Array.from(ui.pvState.keys()).map(function (k) { return k + (ui.pvState.get(k).err ? 'e' : 'l'); }).join(',') + '#' + (ui.showWeak ? 1 : 0) + (ui.techOpen ? 1 : 0) + '#' + Math.floor(screenLines().length / 4);
     if (sig === ui.sig) return;
     if (ui.sig != null && Date.now() - ui.sigAt < 2000) { // kursor nad listą: nie podmieniaj przycisków w trakcie klikania
       let hov = false; try { hov = ui.panel.matches(':hover'); } catch (e) {}
@@ -4175,16 +4375,28 @@
     ui.sig = sig; ui.sigAt = Date.now();
     E.sec.style.display = 'none';
     const frag = doc.createDocumentFragment();
-    frag.appendChild(sourcesBlock());
-    frag.appendChild(h('div', { class: 'sec in', text: 'Pliki i ścieżki napisów' + (items.length ? ': ' + items.length + (items.length > 40 ? ' (pokazuję 40 najlepszych)' : '') : '') }));
+    // [AGENT-EXP] 2026-11-25: układ — 1) 🖥 Z ekranu, 2) 🌐 pliki (pewne; niepewne tropy schowane), 3) ⚙ sekcja dla skryptów
+    frag.appendChild(E.rec);
+    renderScreen(true);
+    const sure = [], weak = [];
+    items.forEach(function (it) { (it.strong ? sure : weak).push(it); });
+    const showWeak = ui.showWeak || !sure.length;   // same niepewne tropy — pokazujemy od razu
+    frag.appendChild(h('div', { class: 'grp' }, h('span', { text: '📁 Pliki z napisami: ' + sure.length + (sure.length > 40 ? ' (pokazuję 40 najlepszych)' : '') })));
+    frag.appendChild(h('div', { class: 'ghint', text: 'Gotowe pliki, które odtwarzacz pobrał albo ma podpięte — całe napisy filmu, nie tylko to, co już było na ekranie. „Podgląd” pokazuje treść; ✓ = ten sam tekst co na ekranie.' }));
     if (!items.length) {
       frag.appendChild(h('div', { class: 'empty-list' },
         fr ? 'Odtwarzacz jest w osadzonej ramce — tam znalazłem napisy (' + fr + '). Zielony przycisk znajdziesz w rogu samego odtwarzacza.'
            : 'Jeszcze nic nie znalazłem. Włącz napisy w odtwarzaczu i puść film na kilka sekund — wtedy odtwarzacz je pobierze, a ja je przechwycę.'));
     } else {
-      for (let i = 0; i < items.length && i < 40; i++) frag.appendChild(itemRow(items[i], i === 0));
+      for (let i = 0; i < sure.length && i < 40; i++) frag.appendChild(itemRow(sure[i], sure[i] === items[0]));
+      if (weak.length) {
+        if (sure.length) frag.appendChild(btn((ui.showWeak ? 'Schowaj' : 'Pokaż') + ' niepewne tropy (' + weak.length + ')', 'Adresy, które tylko wyglądają na napisy (np. z pamięci strony) — zwykle to nie są napisy filmu', function () { ui.showWeak = !ui.showWeak; ui.sig = null; renderPanel(); }, 'link'));
+        else frag.appendChild(h('div', { class: 'ghint', text: 'Pewnych plików jeszcze nie ma — poniżej tylko niepewne tropy (sprawdź je „Podglądem”).' }));
+        if (showWeak) for (let i = 0; i < weak.length && i < 40; i++) frag.appendChild(itemRow(weak[i], weak[i] === items[0]));
+      }
       if (fr) frag.appendChild(h('div', { class: 'empty-list', text: 'Dodatkowo ' + fr + ' w osadzonej ramce — przycisk jest w rogu odtwarzacza.' }));
     }
+    frag.appendChild(sourcesBlock());
     const st = E.list.scrollTop;
     while (E.list.firstChild) E.list.removeChild(E.list.firstChild);
     E.list.appendChild(frag);
@@ -4693,6 +4905,15 @@
       else if (d.cmd === 'state') emit('session', { on: SESJA });
       else if (d.cmd === 'gui') { try { applyGui(!!d.gui); } catch (e) {} }
       else if (d.cmd === 'best') sendBest(); // lowca_auto.js: kwestie najlepszych napisów → lektor
+      // [FIX 2026-11-25] dom_content.js: inny film w tym samym odtwarzaczu (adres bez zmian) — jak nowa strona:
+      // stare znaleziska precz (lowca_auto czyści lektora przez ush:reset) i szukanie od nowa
+      else if (d.cmd === 'reset') {
+        resetStore(); eco.done = false;
+        report('Nawigacja', 'nowy film w tym samym odtwarzaczu — bufor wyczyszczony, skanuję od nowa');
+        emit('reset', { page: String(W.location.href) });
+        if (SESJA || eco.parked) ecoWake('nowy film w odtwarzaczu');   // ręczny „stop” Łowcy zostaje uszanowany
+        [400, 1800, 4500].forEach(function (ms) { setTimeout(function () { if (SESJA) scanAll(true); }, ms); });
+      }
       else if (d.cmd === 'pin') { pinState = { on: !!d.on, label: String(d.label || '') }; uiDirty(); }   // [AGENT-EXP] 2026-11-06: 📌 stan z mostka
     } catch (e) {}
   });

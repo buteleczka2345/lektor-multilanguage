@@ -64,6 +64,7 @@
         subOffsetMs: 0,       // [FIX 2026-11-21] przesunięcie napisów (subtitleOffsetMs — wspólne z lektorem; + = później)
         cenzorPreview: false, // [FIX 2026-11-21] podgląd napisów z pliku na ekranie
         cenzorTailFix: true,  // [FIX 2026-11-21] „napis wisi dłużej niż mowa” — cisza obejmuje oba położenia słowa
+        cenzorSentence: false, // [AGENT-EXP] 2026-11-28: cisza na CAŁE zdanie z przekleństwem (+ Wstecz/Przód)
         words: '',            // [FIX 2026-11-02] wspólne własne słowa cenzora (censorCustomWords)
         censorEnabled: true,  // [AGENT-EXP] 2026-11-17: cenzura mowy lektora (checkbox w popupie) — decyduje też o kreskach w napisach
         censorMode: 'remove', // [AGENT-EXP] 2026-11-17: 'remove' | 'beep' | 'replace' | 'dashes' (dashes = ---------- w napisach na ekranie)
@@ -108,6 +109,7 @@
         opt.cenzorAsrTag = true;
         opt.subOffsetMs = num(o.subtitleOffsetMs, -30000, 30000, 0);   // [FIX 2026-11-21] działa też przy wyłączonym lektorze
         opt.cenzorTailFix = o.cenzorTailFix !== false;
+        opt.cenzorSentence = o.cenzorSentence === true;   // [AGENT-EXP] 2026-11-28
         opt.cenzorPreview = o.cenzorPreview === true;   // [FIX 2026-11-21] podgląd napisów z przesunięciem
         opt.words = typeof o.censorCustomWords === 'string' ? o.censorCustomWords : '';   // [FIX 2026-11-02] jedna lista słów
         opt.censorEnabled = o.censorEnabled === undefined ? opt.censorEnabled : !!o.censorEnabled;   // [AGENT-EXP] 2026-11-17
@@ -137,6 +139,12 @@
     /* ---------------- 1) napisy z sieci (YouTube /api/timedtext) ---------------- */
 
     var cuesByVid = new Map();
+    // [FIX 2026-11-25] każda zapisana lista pamięta długość filmu, przy którym powstała (patrz durGate/sameFilm)
+    var cuesByVidSet = cuesByVid.set.bind(cuesByVid);
+    cuesByVid.set = function (k, list) {
+        try { if (list && typeof list === 'object' && !list.__dur) list.__dur = videoDur(); } catch (e) {}
+        return cuesByVidSet(k, list);
+    };
     var ytLang = new Map();     // YouTube: język napisów, z których wyciszamy (vid -> 'pl', 'en'…)
     function isPl(l) { return /^pl/i.test(String(l || '')); }
     var cues = [];
@@ -285,8 +293,34 @@
     // ⬇ Pobierz całe napisy, auto_subs) — „są napisy z czasami, to cenzor działa”. Używane, gdy strona nie dała
     // własnego pliku (YouTube / Netflix / HBO Max mają pierwszeństwo). Każda kwestia w obu wersjach: przetłumaczona
     // (to czyta lektor) i oryginał, jeśli jest — przekleństwo w którejkolwiek wycisza.
-    var extCues = null;   // { vid, list, info, at }
+    var extCues = null;   // { vid, list, info, at, dur }
+
+    // [FIX 2026-11-25] NAPISY Z POPRZEDNIEGO FILMU. Lektor (dom_content.js) dosyła swoją listę co 15 s, a cenzor
+    // przypisywał ją do filmu, który grał W CHWILI ODBIORU. Po przejściu na inny film bez odświeżenia karty stara lista
+    // trafiała więc do nowego filmu i cisza padała w losowych miejscach (np. na „Pięknie”) — po F5 problem znikał.
+    // Teraz nadawca mówi, do której strony (page) i do jakiego filmu (dur = długość <video> w s) należą napisy;
+    // cudzych nie bierzemy. Klucz strony = ten sam co w background (fileSubsPageKey) i w Łowcy (pageKey).
+    function pageKeyOf(href) {
+        try {
+            var u = new URL(href, location.href), keep = [];
+            ['v', 'id', 'video', 'vid', 'video_id', 'episode', 'ep', 'watch', 'movie', 'film', 'p'].forEach(function (k) { var x = u.searchParams.get(k); if (x) keep.push(k + '=' + x); });
+            return u.origin + u.pathname + '?' + keep.join('&');
+        } catch (e) { return String(href || ''); }
+    }
+    // Długość filmu jako „odcisk” filmu na stronach bez numeru filmu w adresie (ten sam odtwarzacz, inny film).
+    // Na YouTube / Netflixie / HBO / Prime film rozpoznaje adres albo odtwarzacz — tam nie porównujemy (reklamy, SSAI).
+    function durGate() { return !(IS_YT || IS_NF || IS_HBO || IS_AMAZON_VIDEO); }
+    function videoDur() { var v = mainVideo(), d = v ? Number(v.duration) : NaN; return isFinite(d) && d > 0 ? d : 0; }
+    function sameFilm(a, b) { return !a || !b || Math.abs(a - b) <= 2; }
+    var lastPageReject = '';
     function onExtCues(d) {
+        if (d && d.page && pageKeyOf(d.page) !== pageKeyOf(location.href)) {
+            if (lastPageReject !== d.page) {
+                lastPageReject = d.page;
+                try { console.log('[Lektor Cenzor] odrzucam napisy lektora z innej strony (' + d.page + ')'); } catch (e) {}
+            }
+            return;
+        }
         var list = [];
         (Array.isArray(d.cues) ? d.cues : []).forEach(function (c) {
             if (!c) return;
@@ -302,7 +336,9 @@
         });
         list.sort(function (a, b) { return a.start - b.start; });
         var vid = currentVid();
-        extCues = list.length ? { vid: vid, list: list, info: 'napisy lektora (' + String(d.key || 'plik') + '), ' + list.length + ' kwestii', at: Date.now(), ep: String(d.ep || '') } : null;
+        var dur = Number(d.dur);
+        extCues = list.length ? { vid: vid, key: String(d.key || ''), list: list, info: 'napisy lektora (' + String(d.key || 'plik') + '), ' + list.length + ' kwestii', at: Date.now(), ep: String(d.ep || ''),
+            dur: isFinite(dur) && dur > 0 ? dur : 0 } : null;   // [FIX 2026-11-25] długość filmu, do którego należą
         if (vid === curVid || curVid === null) useCuesFor(vid);
     }
     window.addEventListener('message', function (ev) {
@@ -336,8 +372,10 @@
     // [AGENT-EXP] 2026-11-17: ostatnio odrzucony plik lektora (inny odcinek) — log tylko raz na odcinek
     var lastEpReject = '';
 
+    var cuesDur = 0;   // [FIX 2026-11-25] długość filmu, do którego należą bieżące „cues” (0 = nie wiadomo)
     function useCuesFor(vid) {
         var own = cuesByVid.get(vid) || [];
+        if (durGate() && own.length && !sameFilm(own.__dur, videoDur())) own = [];   // [FIX 2026-11-25] lista z innego filmu
         // [AGENT-EXP] 2026-11-06: wygrywa lista, która pokrywa więcej filmu — kawałki ze ścieżki odtwarzacza
         // (bufor) nie mogą przykryć całego pliku z manifestu ani napisów pobranych „na żądanie”.
         var ext = null;
@@ -346,14 +384,20 @@
             // odcinka potrafią dotrzeć ze starym adresem — takie kwestie NIE mogą ciąć nowego odcinka
             // (wcześniej cenzor wyciszał w miejscach, gdzie nikt nie mówi).
             var epOk = !extCues.ep || extCues.ep === (location.pathname || '');
-            if (extCues.vid === vid && epOk) ext = extCues.list;
+            // [FIX 2026-11-25] lista lektora z filmu o innej długości (inny film w tym samym odtwarzaczu) — pomijamy
+            var durOk = !durGate() || sameFilm(extCues.dur, videoDur());
+            if (extCues.vid === vid && epOk && durOk) ext = extCues.list;
             else if (!epOk && lastEpReject !== extCues.ep) {
                 lastEpReject = extCues.ep;
                 try { console.log('[Lektor Cenzor] odrzucam plik lektora z innego odcinka (' + extCues.ep + ' ≠ ' + location.pathname + ')'); } catch (e) {}
             }
         }
-        cues = (ext && betterThanCues(ext, own)) ? ext : own;
+        // [AGENT-EXP] 2026-11-26: Netflix — to, co CZYTA lektor, zawsze wygrywa ze starym plikiem/partiami w pamięci
+        // cenzora (wcześniej dłuższy stary plik wygrywał po rozpiętości i cenzor ciął według innych napisów).
+        var lektorWins = !!ext && IS_NF && extCues.key === 'lektor-netflix';
+        cues = (ext && (lektorWins || betterThanCues(ext, own))) ? ext : own;
         if (cues === ext) lastTrackInfo = extCues.info;
+        cuesDur = (cues === ext && extCues.dur) ? extCues.dur : ((cues.__dur) || videoDur());   // [FIX 2026-11-25] do jakiego filmu należy lista
         cueMode = cues.length > 0;
         windows = []; plannedFor = -1;
         if (cueMode) planFromCues();
@@ -1482,7 +1526,7 @@
     // bez ogona 9,6% → 8,7%). Tempo bierzemy z wczytanego pliku: P20 „sekund na jednostkę tekstu” to kwestie
     // prawie bez ogona; z danych: tempo mowy = P20 × 1,11, próg „za długa” = P20 × 1,30.
     var TAIL_P20_DEF = 0.0636;   // s materiału (1,0×) na jednostkę wagi — P20 z danych (audiobook)
-    var tailP20 = TAIL_P20_DEF, tailCalibN = 0;
+    var tailP20 = TAIL_P20_DEF, tailCalibN = 0, tailPad = 1;   // tailPad = P50/P20: plik systematycznie trzyma napis po mowie
     function cueUnits(text) {   // te same wagi co calculateWordTimings (słowa + pauzy z interpunkcji)
         var u = 0;
         String(text || '').trim().split(/\s+/).forEach(function (w) {
@@ -1501,20 +1545,37 @@
             if (u > 0 && d > 0) r.push(d / u);
         });
         tailCalibN = r.length;
-        if (r.length < 30) { tailP20 = TAIL_P20_DEF; return; }
+        if (r.length < 30) { tailP20 = TAIL_P20_DEF; tailPad = 1; return; }
         r.sort(function (a, b) { return a - b; });
         // Górny limit 0,066 (ok. +4% ponad dane): gdy WSZYSTKIE kwestie mają ogon, P20 też go ma i bez limitu
         // dostrajanie „uczyło się” zbyt wolnej mowy (test: przeciek 39% przy 0,080 → 23% przy 0,066).
-        tailP20 = Math.min(0.066, Math.max(0.050, r[Math.floor(r.length * 0.2)]));
+        var p20raw = r[Math.floor(r.length * 0.2)]; tailP20 = Math.min(0.066, Math.max(0.050, p20raw)); tailPad = Math.max(1, r[Math.floor(r.length * 0.5)] / p20raw);
     }
     // Drugie położenie słowa (od początku kwestii, normalne tempo) — albo null, gdy kwestia nie jest „za długa”.
-    function tailAltTimes(cue, sp) {
+    // [C 2026-11-25] Gdy ogon jest wyraźny, samo to położenie wystarcza: dotąd cisza brała SUMĘ obu położeń,
+    // czyli przy długiej kwestii nawet 1,5–2 s na jedno słowo. Teraz:
+    //  * kwestia ≥1,55× dłuższa niż tekst → cisza tylko „od początku kwestii” (krótsza, wciąż pokrywa słowo);
+    //  * w plikach, które SYSTEMATYCZNIE trzymają napis po mowie (mediana/P20 ≥ 1,25), wystarcza już 1,40×; ≥1,40× i ≥0,35 s przerwy do następnej kwestii też wystarcza (przerwa potwierdza ogon);
+    //  * wcześniej w kwestii jest kropka/?/!/… → ZOSTAJE suma: w środku mogła być długa pauza, więc oba
+    //    położenia są równie prawdopodobne.
+    function tailAltTimes(cue, sp, ci) {
         if (!opt.cenzorTailFix) return null;
         var u = cueUnits(cue.text), d = cue.end - cue.start;
-        if (!(u > 0) || d <= u * tailP20 * 1.30) return null;
-        var tm2 = calculateWordTimings(cue.text, cue.start, cue.start + u * tailP20 * 1.11);
+        if (!(u > 0)) return null;
+        var expected = u * tailP20;
+        if (d <= expected * 1.30) return null;
+        var tm2 = calculateWordTimings(cue.text, cue.start, cue.start + expected * 1.11);
         if (!tm2.length || !tm2[sp.first] || !tm2[sp.last]) return null;
-        return { from: tm2[sp.first].start, to: Math.max(tm2[sp.last].end, tm2[sp.first].start + 0.15) };
+        var from = tm2[sp.first].start;
+        var to = Math.max(tm2[sp.last].end, from + 0.15);
+        var before = String(cue.text).trim().split(/\s+/).slice(0, sp.first).join(' ');
+        var stop = /[.!?…]|\.{2,}/.test(before);   // pauza w środku kwestii = nie ufamy „od początku”
+        var ratio = d / expected, gap = NaN;
+        var nx = (typeof ci === 'number') ? cues[ci + 1] : null;
+        if (nx && nx !== cue && nx.start >= cue.end) gap = nx.start - cue.end;
+        var t1 = tailPad >= 1.25 ? 1.40 : 1.55, t2 = tailPad >= 1.25 ? 1.30 : 1.40, alone = !stop && (ratio >= t1 || (ratio >= t2 && gap >= 0.35));
+        if (!alone) return { from: from, to: to, alone: false };
+        return { from: Math.max(cue.start, from - 0.03), to: Math.min(cue.end, to + 0.06), alone: true };
     }
 
     // [FIX 2026-11-21] Tempo, na którym trenowano model PMT (model.json: meta.speed / timeline.rate = 1,5×).
@@ -1560,7 +1621,7 @@
             last + 1 < L.length ? at(L[last + 1].startRealMs) : NaN);
     }
 
-    function wordTimesInCue(cue, match) {
+    function wordTimesInCue(cue, match, ci) {
         var text = cue.text || '';
         var mEnd = match.index + Math.max(1, match.word.length) - 1;
         if (cue.segs && cue.segs.length) {   // auto-napisy: prawdziwe czasy słów
@@ -1588,7 +1649,8 @@
         var prevEnd = sp.first > 0 ? tm[sp.first - 1].end : NaN;
         var nextStart = sp.last + 1 < tm.length ? tm[sp.last + 1].start : NaN;
         var bleed = neighborBleed(tm[sp.first].start, Math.max(tm[sp.last].end, tm[sp.first].start + 0.15), prevEnd, nextStart);
-        var alt = tailAltTimes(cue, sp);   // [FIX 2026-11-21] napis za długi na tekst → cisza obejmuje oba położenia
+        var alt = tailAltTimes(cue, sp, ci);   // [FIX 2026-11-21] napis za długi na tekst → cisza obejmuje oba położenia
+        if (alt && alt.alone) return { from: alt.from, to: alt.to };   // [C 2026-11-25] ogon pewny — jedno położenie
         if (alt) bleed = { from: Math.min(bleed.from, alt.from), to: Math.max(bleed.to, alt.to) };
         return bleed;
     }
@@ -1602,7 +1664,11 @@
     // ms czasu rzeczywistego → sekundy materiału (przy 1.5× okno w materiale musi być 1.5× dłuższe).
     // [AGENT-EXP] 2026-10-20: trzeci suwak z „Netflix Cenzor 4.6” — TEMPO TEKSTU. Auto = tempo filmu (jak dotąd);
     // ręcznie = suwak 0,25–2,5, niezależny od tempa filmu (mniej = krótsze okna ciszy, więcej = dłuższe).
+    // [AGENT-EXP] 2026-11-26: przywrócone — film na 1,5× → cenzor liczy okna ciszy też na 1,5× (było 1,2×).
+    // Działa zawsze, niezależnie od suwaka i trybu Auto; przy innych prędkościach filmu bez zmian.
+    var FILM_RATE_15_CENZOR = 1.5;
     function textRate() {
+        if (Math.abs(speedOf() - 1.5) < 0.05) return FILM_RATE_15_CENZOR;
         if (opt.cenzorTextAuto) return speedOf();
         var n = Number(opt.cenzorTextRate);
         return (!isFinite(n) || n <= 0) ? 1 : Math.min(2.5, Math.max(0.25, n));
@@ -1637,22 +1703,51 @@
     function prerollSec() { return Math.max(opt.cenzorBufferMs, opt.cenzorPrerollMs || 0) / 1000; }
     function postrollSec() { return Math.max(opt.cenzorHoldMs, opt.cenzorPostrollMs || 0) / 1000; }
 
+    // [AGENT-EXP] 2026-11-28: granice zdania (w obrębie tekstu) wokół słowa: od znaku po .!?… do najbliższego .!?…
+    // Zwraca pierwsze i ostatnie słowo zdania jako „dopasowania” { index, word } — czasy liczy zwykły model słów.
+    // shortcut: zdanie rozbite na dwie kwestie — wycisza tylko część w kwestii ze słowem; łączyć sąsiednie kwestie, gdy przecieka.
+    function sentenceEnds(text, idx, len) {
+        var s = 0, e = text.length, re = /[.!?…]+["'”»)]*\s+/g, x;
+        while ((x = re.exec(text))) {
+            var cut = x.index + x[0].length;
+            if (cut <= idx) s = cut; else if (x.index >= idx + len) { e = x.index + 1; break; }
+        }
+        var body = text.slice(s, e), lead = body.length - body.replace(/^\s+/, '').length;
+        var first = (body.slice(lead).match(/^\S+/) || [''])[0];
+        var trimmed = body.replace(/\s+$/, ''), lastM = trimmed.match(/\S+$/), last = lastM ? lastM[0] : first;
+        return { a: { index: s + lead, word: first || 'x' }, b: { index: s + trimmed.length - last.length, word: last || 'x' } };
+    }
+
     function planFromCues() {
         if (!wordRegex) buildRegex();
         var out = [], pre = prerollSec(), post = postrollSec();
         var off = opt.subOffsetMs / 1000;   // [FIX 2026-11-21] przesunięcie napisów — to samo co u lektora (+ = później)
         calibrateTail();
         covStart = Infinity; covEnd = 0;
-        cues.forEach(function (c) {
+        cues.forEach(function (c, ci) {
             if (c.start < covStart) covStart = c.start;
             if (c.end > covEnd) covEnd = c.end;
             var pmt = window.PMT_MUTE_TIMER;
+            if (opt.cenzorSentence) {   // [AGENT-EXP] 2026-11-28: całe zdanie z przekleństwem + Wstecz/Przód
+                findMatches(c.text).forEach(function (m) {
+                    var se = sentenceEnds(c.text, m.index, m.word.length);
+                    var wa = wordTimesInCue(c, se.a, ci), wb = wordTimesInCue(c, se.b, ci);
+                    var from = wa ? Math.max(c.start, wa.from) : c.start, to = wb ? Math.min(c.end, wb.to) : c.end;
+                    // zdanie na brzegu kwestii → brzeg kwestii (model słów skraca mowę; tu ma zniknąć całe zdanie)
+                    if (!c.text.slice(0, se.a.index).trim()) from = c.start;
+                    if (!c.text.slice(se.b.index + se.b.word.length).trim()) to = c.end;
+                    out.push({ start: Math.max(0, from - pre), end: to + post, why: [{ w: m.word, t: c.text, src: 'plik' }] });
+                });
+                return;
+            }
             // [FIX 2026-11-21] tryb 'pmt': okna w całości z modelu. Prawdziwe czasy słów (segs, auto-napisy YouTube)
             // zawsze wygrywają z modelem, więc wtedy idziemy ścieżką słów niżej.
             if (opt.cenzorTimingMode === 'pmt' && !(c.segs && c.segs.length) && pmt && pmt.computeCueMuteWindows) {
                 try {
                     var mr = pmtRate(pmt);
-                    var result = pmt.computeCueMuteWindows(pmtWordsInCue(c), c.start * 1000, c.end * 1000, {
+                    var pw = pmtWordsInCue(c);
+                    var pwhy = pw.filter(function (x) { return x.isProfanity; }).map(function (x) { return { w: x.text, t: c.text, src: 'plik' }; });
+                    var result = pmt.computeCueMuteWindows(pw, c.start * 1000, c.end * 1000, {
                         rate: mr,                    // tempo MODELU (czasy pliku = czasy filmu), nie video.playbackRate
                         axis: 'file_1.0x',           // pobrany plik ma jedną oś — bez zgadywania per kwestia
                         preroll_ms: pre * 1000 / mr, // model mnoży przez mr → wychodzi tyle samo ms co w legacy
@@ -1662,7 +1757,7 @@
                         neighbor_aware: false
                     });
                     (result.windows || []).forEach(function (w) {
-                        out.push({ start: Math.max(0, w.startMs / 1000), end: w.endMs / 1000 });
+                        out.push({ start: Math.max(0, w.startMs / 1000), end: w.endMs / 1000, why: pwhy });
                     });
                     return;
                 } catch (e) {
@@ -1670,15 +1765,15 @@
                 }
             }
             findMatches(c.text).forEach(function (m) {
-                // [AGENT-EXP] 2026-10-19: zawsze TYLKO samo słowo (tryb „cała kwestia” usunięty na życzenie).
+                // [AGENT-EXP] 2026-10-19: samo słowo; „całe zdanie” = opcja cenzorSentence wyżej (2026-11-28).
                 var extra = realMsToMaterial(extraHold(m.word));
-                var wt = wordTimesInCue(c, m);
+                var wt = wordTimesInCue(c, m, ci);
                 if (!wt) {   // awaryjnie: proporcja pozycji w tekście
                     var dur = Math.max(0.2, c.end - c.start), total = c.text.length || 1;
                     var f = c.start + (m.index / total) * dur;
                     wt = { from: f, to: f + Math.max(0.15, (m.word.length / total) * dur) };
                 }
-                out.push({ start: Math.max(0, wt.from - pre), end: wt.to + extra + post });
+                out.push({ start: Math.max(0, wt.from - pre), end: wt.to + extra + post, why: [{ w: m.word, t: c.text, src: 'plik' }] });
             });
         });
         if (off) out.forEach(function (w) { w.start = Math.max(0, w.start + off); w.end = Math.max(0, w.end + off); });
@@ -1686,7 +1781,7 @@
         windows = [];
         out.forEach(function (w) {
             var last = windows[windows.length - 1];
-            if (last && w.start - last.end <= MERGE_GAP_SEC) last.end = Math.max(last.end, w.end);
+            if (last && w.start - last.end <= MERGE_GAP_SEC) { last.end = Math.max(last.end, w.end); last.why = (last.why || []).concat(w.why || []); }
             else windows.push(w);
         });
         plannedFor = cues.length;
@@ -2043,6 +2138,15 @@
             keep.add(sig);
             if (liveSeen.has(sig)) return;
             liveSeen.add(sig);
+            if (opt.cenzorSentence) {   // [AGENT-EXP] 2026-11-28: całe zdanie z przekleństwem + Wstecz/Przód
+                var se = sentenceEnds(flat, m.index, m.word.length), line = flat.slice(base);
+                var ea = liveSpeech(flat.slice(base, Math.max(base, se.a.index)), se.a.word, line);
+                var eb = liveSpeech(flat.slice(base, Math.max(base, se.b.index)), se.b.word, line);
+                var sOff = anchor + opt.subOffsetMs / 1000;
+                liveWins.push({ start: Math.max(t, sOff + ea.before - prerollSec()), end: Math.max(sOff + eb.before + eb.word + postrollSec(), t + 0.45),
+                    why: [{ w: m.word, t: flat, src: 'ekran' }] });
+                return;
+            }
             var before = m.index >= base ? flat.slice(base, m.index) : '';
             var est = liveSpeech(before, flat.slice(m.index, m.index + m.word.length + 3).split(/\s+/)[0] || m.word, flat.slice(base));
             var from = anchor + est.before + opt.subOffsetMs / 1000;   // [FIX 2026-11-21] przesunięcie napisów także w live
@@ -2052,7 +2156,8 @@
             var end = to + realMsToMaterial(extraHold(m.word)) + postroll;
             liveWins.push({
                 start: Math.max(t, from - preroll),
-                end: Math.max(end, t + 0.45)   // spóźnione tłumaczenie: i tak krótkie cięcie od razu
+                end: Math.max(end, t + 0.45),   // spóźnione tłumaczenie: i tak krótkie cięcie od razu
+                why: [{ w: m.word, t: flat, src: 'ekran' }]
             });
         });
         liveSeen.forEach(function (s) { if (s.indexOf(key + '|') === 0 && !keep.has(s)) liveSeen.delete(s); });
@@ -2113,16 +2218,59 @@
     }
 
     var mutedEl = null, mutedWas = false, muting = false;
+    // [AGENT-EXP] 2026-11-28: Netflix zapamiętuje wyciszenie cenzora jak wyciszenie użytkownika (też po przeładowaniu).
+    // Dotąd przy następnej ciszy cenzor brał „film był wyciszony” za stan sprzed ciszy i po ciszy zostawiał film
+    // wyciszony na stałe. Teraz na Netflixie: wyciszamy/przywracamy też przez odtwarzacz Netflixa, a „było wyciszone”
+    // liczy się tylko, gdy użytkownik sam wyciszył (volumechange poza ciszą i nie tuż po naszej zmianie).
+    var ownMuteAt = 0, releasedAt = 0, userMuted = false;
+    function nfPlayer() {
+        try {
+            var a = window.netflix.appContext.state.playerApp.getAPI().videoPlayer, ids = a.getAllPlayerSessionIds();
+            return a.getVideoPlayerBySessionId(ids[ids.length - 1]);
+        } catch (e) { return null; }
+    }
+    function setMute(v, m) {
+        ownMuteAt = Date.now();
+        if (v.muted !== m) v.muted = m;
+        if (!IS_NF) return;
+        var p = nfPlayer();
+        try { if (p && p.setMuted && (!p.isMuted || p.isMuted() !== m)) p.setMuted(m); } catch (e) {}
+    }
+    function watchUserMute(v) {
+        if (!IS_NF || v.__lcMuteWatch) return;
+        v.__lcMuteWatch = true;
+        var seen = !!v.muted;
+        v.addEventListener('volumechange', function () {
+            // [AGENT-EXP] 2026-11-28: volumechange leci też przy ściszaniu przez lektora (video.volume) i przy
+            // samowolnym ponownym wyciszeniu Netflixa — wtedy film zostawał wyciszony na stałe. Wyciszenie użytkownika
+            // = tylko prawdziwa zmiana `muted` tuż po jego kliknięciu / klawiszu.
+            var m = !!v.muted, flip = m !== seen;
+            seen = m;
+            if (!flip || muting || Date.now() - ownMuteAt < 1500) return;   // sama głośność, nasza zmiana albo echo Netflixa
+            if (Date.now() - userInputAt > 1500) return;                    // nikt nie klikał — to Netflix/lektor, nie użytkownik
+            userMuted = m;
+        });
+    }
+    var userInputAt = 0;
+    ['pointerdown', 'keydown'].forEach(function (ev) {
+        window.addEventListener(ev, function (e) { if (e.isTrusted) userInputAt = Date.now(); }, true);
+    });
     function applyMute(want) {
         if (want) {
             var v = mainVideo();
             if (!v) return;
-            if (mutedEl && mutedEl !== v) { mutedEl.muted = mutedWas; mutedEl = null; }
-            if (!mutedEl) { mutedEl = v; mutedWas = v.muted; }
-            if (!v.muted) v.muted = true;
+            watchUserMute(v);
+            if (mutedEl && mutedEl !== v) { setMute(mutedEl, mutedWas); mutedEl = null; }
+            if (!mutedEl) { mutedEl = v; mutedWas = IS_NF ? userMuted : v.muted; }
+            if (!v.muted) setMute(v, true);
         } else if (mutedEl) {
-            if (mutedEl.muted !== mutedWas) mutedEl.muted = mutedWas;
+            if (mutedEl.muted !== mutedWas) setMute(mutedEl, mutedWas);
+            if (!mutedWas) releasedAt = Date.now();
             mutedEl = null;
+        } else if (IS_NF && !userMuted && releasedAt) {
+            // [AGENT-EXP] 2026-11-28: bez limitu 2 s — Netflix wycisza z powrotem i później; userMuted jest już pewne (kliknięcie)
+            var v2 = mainVideo();   // Netflix po naszym odciszeniu potrafi sam wyciszyć z powrotem — poprawiamy
+            if (v2 && v2.muted) setMute(v2, false);
         }
         muting = !!want;
     }
@@ -2162,9 +2310,15 @@
         if (looksFull && !IS_LEKTOR_SITE) hboSendToLektor(best, lang, vid, 'całe napisy (odtwarzacz)', 'extFull');
     }
 
-    var curVid = null, lastT = null, lastRate = null;
+    var curVid = null, lastT = null, lastRate = null, lastFilmReject = -1;
     var AUDIO_LEAD_MS = 30;   // [FIX 2026-11-21] opóźnienie wyjścia audio — słuchawki/głośniki na kablu
 
+    // [DIAG 2026-11-26] dziennik: jakie słowo (i z jakiej linii napisów) wyciszyło film → mostek zapisuje do chrome.storage
+    var lastDiagWin = null;
+    function diagLog(w, t) {   // [AGENT-EXP] 2026-11-28: + len = długość ciszy (widać działanie Wstecz/Przód)
+        var why = (w.why || []).slice(0, 4).map(function (x) { return { w: String(x.w || ''), t: String(x.t || '').slice(0, 160), src: x.src || '' }; });
+        try { window.postMessage({ __lektorCenzor: 'diag', entry: { at: Math.round(t * 10) / 10, len: Math.round((w.end - w.start) * 100) / 100, why: why, host: location.hostname } }, location.origin); } catch (e) {}
+    }
     function tick() {
         if (!opt.cenzorOn && !opt.cenzorLive) { if (muting) applyMute(false); return; }
         var vid = currentVid();
@@ -2191,23 +2345,34 @@
         }
         lastT = t; lastRate = rate;
 
-        var useCues = opt.cenzorOn && cueMode;   // [AGENT-EXP] 2026-11-15: wczytany plik ZAWSZE ma pierwszeństwo (wybór źródła napisów już tego nie wyłącza)
+        // [FIX 2026-11-25] INNY FILM W TYM SAMYM ODTWARZACZU (adres bez zmian, inna długość <video>): lista należy
+        // do poprzedniego filmu — nie tniemy z niej (zostaje live). Gdy wróci tamten film (np. po reklamie), lista wraca.
+        var curDur = (cueMode && durGate()) ? videoDur() : 0;
+        if (curDur && !cuesDur) cuesDur = curDur;   // długość znana dopiero teraz — lista należy do tego filmu
+        var filmOk = !curDur || sameFilm(cuesDur, curDur);
+        if (!filmOk && lastFilmReject !== Math.round(curDur)) {
+            lastFilmReject = Math.round(curDur);
+            applyMute(false); liveWins = [];
+            try { console.log('[Lektor Cenzor] inny film w odtwarzaczu (' + Math.round(curDur) + ' s ≠ ' + Math.round(cuesDur) + ' s) — stare napisy nieużywane'); } catch (e) {}
+        } else if (filmOk) lastFilmReject = -1;
+        var useCues = opt.cenzorOn && cueMode && filmOk;   // [AGENT-EXP] 2026-11-15: wczytany plik ZAWSZE ma pierwszeństwo (wybór źródła napisów już tego nie wyłącza)
         if (useCues && plannedFor !== cues.length) planFromCues();
         // [AGENT-EXP] 2026-11-14: HYBRYDA — plik rządzi tam, gdzie sięga (cisza PRZED słowem), a po jego końcu
         // (albo przed pierwszym napisem) cenzor czyta napisy z ekranu: native HBO + polskie Immersive Translate.
         var priorityLive = opt.cenzorPriority === 'live';   // [FIX 2026-11-16] ekran pierwszy także w pokryciu pliku
         var inCoverage = useCues && t >= covStart - 2 && t < covEnd;
-        var want = false;
+        var want = null;
         // [FIX 2026-11-21] dźwięk już wysłany do karty audio gra mimo video.muted — przy słuchawkach na kablu
         // ok. 20–40 ms. Sprawdzamy więc chwilę „za AUDIO_LEAD_MS”: całe okno (start i koniec) przesuwa się o tyle wcześniej.
         var tq = t + AUDIO_LEAD_MS / 1000 * rate;
         if (!isAd()) {
-            if (inCoverage) want = windows.some(function (w) { return tq >= w.start && tq < w.end; });
+            if (inCoverage) want = windows.find(function (w) { return tq >= w.start && tq < w.end; });
             if (!want && opt.cenzorLive && (priorityLive || !useCues || !inCoverage)) {
-                want = liveWins.some(function (w) { return tq >= w.start && tq < w.end; });
+                want = liveWins.find(function (w) { return tq >= w.start && tq < w.end; });
             }
             if (liveWins.length) liveWins = liveWins.filter(function (w) { return w.end > t - 1; });
         }
+        if (want && want !== lastDiagWin) { lastDiagWin = want; diagLog(want, t); }
         applyMute(!!want);
         while (windows.length && windows[0].end + 5 < t) windows.shift();
     }
@@ -2240,27 +2405,106 @@
     }
     function pvHost() { return document.fullscreenElement || document.webkitFullscreenElement || document.documentElement; }
     function pvRemove() { if (pvEl) { try { pvEl.remove(); } catch (e) {} pvEl = null; pvKey = ''; } }
-    function pvLine(box, text) {
-        var line = document.createElement('div'), ms = findMatches(text), pos = 0;
+
+    // [AGENT-EXP] 2026-11-26: synchronizacja „słyszę przekleństwo”. Klik w czerwone słowo podglądu
+    // w chwili, gdy słychać je u lektora/w filmie → przesunięcie tak, by to słowo wypadało „teraz”.
+    // Zapis przez mostek do subtitleOffsetMs — ten sam suwak co lektor, więc przesuwa się lektor i cenzor.
+    var PV_REACT_SEC = 0.25, PV_NEAR_SEC = 10, PV_MAX_MS = 10000;   // suwak w popupie ma ±10 s
+    var pvFlashTxt = '', pvFlashUntil = 0, pvMatchCache = new WeakMap();
+    function pvOffTxt(ms) { return (ms >= 0 ? '+' : '−') + (Math.abs(ms) / 1000).toFixed(1).replace('.', ',') + ' s'; }
+    function pvMatches(c) {   // findMatches co klatkę dla kilkunastu kwestii jest za drogie — pamięć na kwestię i listę słów
+        var e = pvMatchCache.get(c);
+        if (!e || e.w !== opt.words) { e = { w: opt.words, m: findMatches(String(c.text || '')) }; pvMatchCache.set(c, e); }
+        return e.m;
+    }
+    function pvWordMid(c, m, ci) {   // środek słowa w czasie PLIKU (bez przesunięcia) — ten sam model co okna ciszy
+        var wt = null;
+        try { wt = wordTimesInCue(c, m, ci); } catch (e) {}
+        if (!wt) {
+            var dur = Math.max(0.2, c.end - c.start), total = String(c.text || '').length || 1, f = c.start + (m.index / total) * dur;
+            wt = { from: f, to: f + Math.max(0.15, (m.word.length / total) * dur) };
+        }
+        return (wt.from + wt.to) / 2;
+    }
+    function pvFlash(txt) { pvFlashTxt = txt; pvFlashUntil = Date.now() + 2500; pvKey = ''; }
+    function pvSyncTo(mid, t) {
+        var heard = t - PV_REACT_SEC * speedOf();   // naciśnięcie jest trochę po usłyszeniu
+        var ms = Math.max(-PV_MAX_MS, Math.min(PV_MAX_MS, Math.round((heard - mid) * 100) * 10));
+        opt.subOffsetMs = ms;
+        windows = []; plannedFor = -1;
+        if (cueMode) planFromCues();
+        pvFlash('✔ zsynchronizowano · przesunięcie ' + pvOffTxt(ms));
+        try { window.postMessage({ __lektorCenzor: 'setOffset', ms: ms }, location.origin); } catch (e) {}
+        return ms;
+    }
+    function pvNeighbors(t, active) {   // najbliższa kwestia z przekleństwem przed i po (gdy przesunięcie jest złe, tej właściwej nie ma na ekranie)
+        var off = opt.subOffsetMs / 1000, lo = 0, hi = cues.length, prev = null, next = null, i;
+        while (lo < hi) { var mid = (lo + hi) >> 1; if (cues[mid].start + off <= t) lo = mid + 1; else hi = mid; }
+        for (i = lo - 1; i >= 0 && cues[i].start + off >= t - PV_NEAR_SEC; i--)
+            if (active.indexOf(cues[i]) < 0 && pvMatches(cues[i]).length) { prev = cues[i]; break; }
+        for (i = lo; i < cues.length && cues[i].start + off <= t + PV_NEAR_SEC; i++)
+            if (pvMatches(cues[i]).length) { next = cues[i]; break; }
+        return { prev: prev, next: next };
+    }
+    // [AGENT-EXP] 2026-11-26: stan przekleństwa względem okna ciszy cenzora (to, co cenzor NAPRAWDĘ wyciszy):
+    // 0 = jeszcze przed ciszą, 1 = cenzor wycisza TERAZ, 2 = już po. Słyszysz słowo, a nie świeci na żółto →
+    // przesuń w panelu 🎤: żółte było wcześniej (szare) = „+”, żółte będzie później (czerwone) = „−”.
+    function pvMid(c, m) {   // środek słowa z przesunięciem; czas pliku liczony raz na słowo (cache razem z pvMatches)
+        if (m.__pvMid === undefined) m.__pvMid = pvWordMid(c, m, cues.indexOf(c));
+        return m.__pvMid + opt.subOffsetMs / 1000;
+    }
+    function pvWordState(c, m, t) {
+        var mid = pvMid(c, m), lo = 0, hi = windows.length;
+        while (lo < hi) { var k = (lo + hi) >> 1; if (windows[k].start <= mid) lo = k + 1; else hi = k; }
+        var w = lo > 0 && windows[lo - 1].end >= mid ? windows[lo - 1] : null;
+        var a = w ? w.start : mid - 0.25, b = w ? w.end : mid + 0.25;   // brak okna (cenzor wył.) — samo słowo ±0,25 s
+        return t < a ? 0 : (t <= b ? 1 : 2);
+    }
+    function pvSig(cs, t) {
+        return cs.map(function (c) { return c ? pvMatches(c).map(function (m) { return pvWordState(c, m, t); }).join('') : '-'; }).join('/');
+    }
+    var PV_STYLE = ['color:#ff5a5a;text-decoration:underline;',
+        'color:#000;background:#ffd400;text-shadow:none;border-radius:4px;padding:0 4px;',
+        'color:#9a9a9a;text-decoration:line-through;'];
+    function pvLine(box, c, prefix, t) {
+        var text = String(c.text || ''), line = document.createElement('div'), ms = pvMatches(c), pos = 0;
+        if (prefix) {
+            line.style.cssText = 'font-size:15px;opacity:.6;';
+            line.appendChild(document.createTextNode(prefix));
+        }
         ms.forEach(function (m) {
             if (m.index < pos) return;
             if (m.index > pos) line.appendChild(document.createTextNode(text.slice(pos, m.index)));
             var b = document.createElement('span');
-            b.textContent = text.substr(m.index, m.word.length);
-            b.style.cssText = 'color:#ff5a5a;font-weight:700;text-decoration:underline;';
+            var st = pvWordState(c, m, t);
+            b.textContent = (st === 1 ? '🔇 ' : '') + text.substr(m.index, m.word.length);
+            b.title = 'Kliknij, gdy słyszysz to słowo — napisy przesuną się do głosu';
+            b.style.cssText = 'font-weight:700;pointer-events:auto;cursor:pointer;' + PV_STYLE[st];
+            // pointerdown, nie click: podgląd przebudowuje się w trakcie, a liczy się chwila naciśnięcia
+            b.addEventListener('pointerdown', function (e) {
+                e.preventDefault(); e.stopPropagation();
+                var v = mainVideo();
+                if (v) pvSyncTo(pvWordMid(c, m, cues.indexOf(c)), v.currentTime);
+            });
+            b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); });
             line.appendChild(b);
             pos = m.index + m.word.length;
         });
         if (pos < text.length) line.appendChild(document.createTextNode(text.slice(pos)));
         box.appendChild(line);
     }
+    // [AGENT-EXP] 2026-11-26: klawisz S usunięty (nie sprawdzał się) — przesuwanie ręczne w panelu „🎤 Lektor — co mówię”.
     function previewTick() {
         if (!opt.cenzorPreview) { pvRemove(); return; }
         var v = mainVideo();
         if (!v) { pvRemove(); return; }
         var t = v.currentTime, list = (cueMode && cues.length) ? pvActive(t) : null;
-        var offTxt = (opt.subOffsetMs >= 0 ? '+' : '−') + (Math.abs(opt.subOffsetMs) / 1000).toFixed(1).replace('.', ',') + ' s';
-        var key = (list ? list.map(function (c) { return c.start + '|' + c.text; }).join('#') : 'brak') + '|' + muting + '|' + offTxt;
+        var offTxt = pvOffTxt(opt.subOffsetMs);
+        var nb = list ? pvNeighbors(t, list) : { prev: null, next: null };   // [AGENT-EXP] 2026-11-26
+        var flash = Date.now() < pvFlashUntil ? pvFlashTxt : '';
+        var key = (list ? list.map(function (c) { return c.start + '|' + c.text; }).join('#') : 'brak') + '|' + muting + '|' + offTxt
+            + '|' + (nb.prev ? nb.prev.start : '') + '|' + (nb.next ? nb.next.start : '') + '|' + flash
+            + '|' + (list ? pvSig([nb.prev, nb.next].concat(list), t) : '');   // [AGENT-EXP] 2026-11-26: kolor = stan ciszy
         var host = pvHost();
         if (!pvEl || pvEl.parentNode !== host) {
             pvRemove();
@@ -2283,9 +2527,17 @@
         pvKey = key;
         while (pvEl.firstChild) pvEl.removeChild(pvEl.firstChild);
         var head = document.createElement('div');
-        head.textContent = '👁 Podgląd cenzora · przesunięcie ' + offTxt + (muting ? '  🔇' : '');
-        head.style.cssText = 'font-size:13px;font-weight:500;color:#ffd400;';
+        head.textContent = flash || ('👁 Podgląd cenzora · przesunięcie ' + offTxt + (muting ? '  🔇' : '')
+            + (list ? ' · przesuwaj w panelu 🎤 (lewy dół)' : ''));
+        head.style.cssText = 'font-size:13px;font-weight:500;color:' + (flash ? '#7dff8a' : '#ffd400') + ';';
         pvEl.appendChild(head);
+        if (list) {
+            var leg = document.createElement('div');
+            leg.textContent = 'czerwone = cisza dopiero będzie · 🔇 żółte = cenzor wycisza teraz · szare = już było';
+            leg.style.cssText = 'font-size:12px;font-weight:400;opacity:.75;';
+            pvEl.appendChild(leg);
+        }
+        if (nb.prev) pvLine(pvEl, nb.prev, '← ', t);   // [AGENT-EXP] 2026-11-26: sąsiednie przekleństwa (do kliknięcia)
         if (!list) {
             var n = document.createElement('div');
             n.textContent = 'Brak pobranego pliku napisów — podgląd pokazuje tylko napisy z pliku.';
@@ -2296,7 +2548,8 @@
             e.textContent = '…';
             e.style.opacity = '.5';
             pvEl.appendChild(e);
-        } else list.forEach(function (c) { pvLine(pvEl, String(c.text || '')); });
+        } else list.forEach(function (c) { pvLine(pvEl, c, '', t); });
+        if (nb.next) pvLine(pvEl, nb.next, '→ ', t);
     }
 
     // rAF staje w karcie w tle, a YouTube często gra w tle — wtedy setTimeout.
@@ -2321,7 +2574,7 @@
                 timingModelSource: (window.PMT_MUTE_TIMER && window.PMT_MUTE_TIMER.MODEL && window.PMT_MUTE_TIMER.MODEL.meta && window.PMT_MUTE_TIMER.MODEL.meta.source) || 'wbudowany (bez meta)',
                 audioLeadMs: AUDIO_LEAD_MS,
                 subOffsetMs: opt.subOffsetMs,   // [FIX 2026-11-21] przesunięcie napisów (wspólne z lektorem)
-                tailFix: opt.cenzorTailFix, tailTempo: Math.round(tailP20 * 1.11 * 10000) / 10000, tailCalibCues: tailCalibN,
+                tailFix: opt.cenzorTailFix, tailTempo: Math.round(tailP20 * 1.11 * 10000) / 10000, tailCalibCues: tailCalibN, tailPad: Math.round(tailPad * 100) / 100,
                 timingMode: opt.cenzorTimingMode,
                 prerollMs: opt.cenzorPrerollMs,
                 postrollMs: opt.cenzorPostrollMs,
@@ -2377,9 +2630,11 @@
             nfMerge: function (vid, file, sel) { var e = nfEntry(vid); e.file = file; e.sel = Object.create(null); if (sel) e.sel.x = sel; nfRebuild(vid); return (cuesByVid.get(vid) || []).length; },
             pickTrackPl: pickTrackPl, onTimedtext: onTimedtext, ytLang: function (v) { return ytLang.get(v); },
             nfStoreGet: function (v) { return nfStore.get(String(v)); }, nfSendToLektor: nfSendToLektor,
+            applyMute: applyMute,   // [AGENT-EXP] 2026-11-28: test wyciszania na Netflixie
             nfTrackCount: function (v) { return (nfTracks.get(String(v)) || []).length; }, applyOpts: applyOpts, wordTimesInCue: wordTimesInCue,
             plan: function (list) { cues = list; cueMode = true; planFromCues(); return windows.slice(); },
             previewTick: function () { previewTick(); },   // [FIX 2026-11-21] test podglądu
+            pvSyncTo: pvSyncTo, pvNeighbors: pvNeighbors, pvWordState: pvWordState,   // [AGENT-EXP] 2026-11-26: synchronizacja kliknięciem
             live: function (text, t, tr) { if (!liveReadingAllowed(t)) return { liveWins: [], skipped: 'plik ma priorytet' }; liveSources = function () { return { nat: text, tr: tr || '' }; }; checkLive(t); return { liveWins: liveWins.slice() }; },
             liveAllowed: function (t) { return liveReadingAllowed(t); },   // [AGENT-EXP] 2026-11-14: hybryda — od kiedy czytamy ekran
             findMatches: function (s) { return findMatches(s); },

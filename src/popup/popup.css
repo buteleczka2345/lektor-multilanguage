@@ -132,6 +132,7 @@ h1 { margin: 0; font-size: 1.3rem; font-weight: 300; letter-spacing: .6px; line-
     overflow: hidden;
     text-overflow: ellipsis;
 }
+#offsetVal { flex-shrink: 0; max-width: none; }   /* [AGENT-EXP] 2026-11-26: długi tytuł ściskał „+0,5 s” do „+0....” */
 #ttsEngineState { display: inline-flex; align-items: center; gap: 5px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #888; display: inline-block; flex: none; }
 

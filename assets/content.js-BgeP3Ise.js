@@ -100,7 +100,14 @@ if (!('__lektorBufPauza' in window)) {
         if (!t) return;
         spokenLog.push(t);
         if (spokenLog.length > 100) spokenLog.shift();
+        try { if (window.__LivedubPanel) window.__LivedubPanel.log(t, 'spoken'); } catch (e) {}   // [AGENT-EXP] 2026-11-26: panel „🎤 Lektor — co mówię” (sub_panel.js) jak na YouTube
     }
+    // [AGENT-EXP] 2026-11-26: frazy zablokowane w panelu (wcześniej Netflix nie miał filtra użytkownika)
+    function panelBlocked(t) {
+        try { if (window.__LivedubPanel && window.__LivedubPanel.isBlocked(t)) { window.__LivedubPanel.log(t, 'blocked'); return true; } } catch (e) {}
+        return false;
+    }
+    function panelStatus(t) { try { if (window.__LivedubPanel && window.__LivedubPanel.status) window.__LivedubPanel.status(t); } catch (e) {} }   // [AGENT-EXP] 2026-11-26
     try {
         window.__LIVEDUB_GET_SPOKEN__ = function () { return spokenLog.slice(); };
         window.__LIVEDUB_CLEAR_SPOKEN__ = function () { spokenLog.length = 0; };
@@ -175,13 +182,32 @@ if (!('__lektorBufPauza' in window)) {
         video = document.querySelector('video');
         if (video) {
             var seekDebounce = null;
+            // [FIX 2026-11-24] skąd przewinięto (ostatnia pozycja z pętli sprzed 'seeking') — mały skok samego Netflixa
+            // (zacięcie / zmiana jakości) nie może kasować przeczytanych kwestii, bo lektor powtarzał bieżące zdanie
+            // i cała kolejka zostawała w tyle za filmem.
+            video.addEventListener('seeking', function () {
+                lastSeekEvtAt = Date.now();
+                if (seekFromMs < 0) seekFromMs = syncLastT;
+                syncLastT = -1;
+            });
             video.addEventListener('seeked', function () {
+                lastSeekEvtAt = Date.now();
                 // Debounce: przewijanie (scrub) generuje serię 'seeked' — reaguj dopiero,
                 // gdy przewijanie ucichnie, inaczej burza czyszczeń rozjeżdża lektora.
                 if (seekDebounce) clearTimeout(seekDebounce);
                 seekDebounce = setTimeout(function () {
                     seekDebounce = null;
+                    var from = seekFromMs, nowS = video.currentTime * 1000;
+                    seekFromMs = -1;
+                    if (from >= 0 && Math.abs(nowS - from) < SMALL_SEEK_MS) {
+                        // [FIX 2026-11-24] mały skok (Netflix sam poprawił pozycję) — nie czytamy od nowa, tylko
+                        // pomijamy to, co już minęło; bieżące zdanie lektora gra dalej
+                        try { console.debug('[Multilektor] mały skok Netflixa o ' + Math.round(nowS - from) + ' ms — bez czytania od nowa'); } catch (e) {}
+                        markPassed(nowS, false);
+                        return;
+                    }
                     played.clear(); // kwestie można przeczytać ponownie od nowej pozycji
+                    markPassed(nowS, false);   // [FIX 2026-11-24] kwestie zakończone przed nową pozycją nie wracają
                     recAheadMs = 0;
                     spokenWords = 0;
                     recentSpoken.length = 0;
@@ -210,6 +236,83 @@ if (!('__lektorBufPauza' in window)) {
     // [FIX 2026-11-02] Kwestia przerwana pauzą filmu (bez „Czytaj zawsze do końca”) — po wznowieniu czytana od początku
     // (wspólna funkcja harmonogramu). Wcześniej zostawała oznaczona jako przeczytana, więc jej reszta przepadała.
     var pausedAtMs = -1;
+
+    // [FIX 2026-11-24] Pilnowanie zgodności lektora z filmem. Netflix co jakiś czas „przeskakuje”: buforuje (obraz stoi,
+    // a film formalnie gra), sam przesuwa pozycję albo skacze bez zdarzenia 'seeked'. Lektor czytał wtedy dalej
+    // (kolejka liczy czas zegarem, nie czasem filmu) i zostawał przed albo za filmem aż do końca gęstego dialogu.
+    // Teraz: zacięcie → lektor milknie i po wznowieniu czyta przerwane zdanie od nowa; skok czasu → kolejka od nowa
+    // od bieżącego miejsca filmu.
+    var SMALL_SEEK_MS = 2000;     // skok mniejszy = poprawka Netflixa, nie przewinięcie użytkownika
+    var JUMP_MS = 1500;           // rozjazd czasu filmu i zegara, od którego uznajemy skok
+    var STALL_MS = 700;           // tyle stoi czas filmu (film nie w pauzie) = zacięcie / buforowanie
+    var syncLastT = -1, syncLastWall = 0, frozenSince = 0, stalled = false, stallAtMs = -1;
+    var lastSeekEvtAt = 0, seekFromMs = -1;
+
+    // Kwestie, które przy pozycji nowMs już się skończyły (albo — gdy skipCurrent — trwają dłużej niż 1 s),
+    // oznacz jako przeczytane: lektor nie nadrabia zaległości, tylko łapie film od bieżącego miejsca.
+    function markPassed(nowMs, skipCurrent) {
+        var off = getOff();
+        for (var j = 0; j < subtitles.length; j++) {
+            var s = subtitles[j];
+            if (!s) continue;
+            var st = s.startMs + off, en = s.endMs + off;
+            if (en < nowMs || (skipCurrent && st < nowMs - 1000 && nowMs < en)) played.add(s.id);
+        }
+    }
+    // Skok wstecz: kwestie od nowej pozycji wolno przeczytać jeszcze raz.
+    function unmarkFrom(nowMs) {
+        var off = getOff();
+        for (var j = 0; j < subtitles.length; j++) {
+            var s = subtitles[j];
+            if (s && s.startMs + off >= nowMs) played.delete(s.id);
+        }
+    }
+
+    // Wołane co obieg pętli lektora (50 ms). Zwraca true, gdy film stoi (zacięcie) — wtedy nie czytamy.
+    function syncGuard(v, nowMs) {
+        var wall = Date.now();
+        if (v.paused || v.ended || document.visibilityState !== 'visible') {
+            syncLastT = -1; frozenSince = 0; stalled = false;
+            return false;
+        }
+        if (syncLastT < 0 || v.seeking) { syncLastT = v.seeking ? -1 : nowMs; syncLastWall = wall; frozenSince = 0; return stalled; }
+        var rate = v.playbackRate || 1;
+        if (Math.abs(nowMs - syncLastT) < 1) {
+            // czas filmu stoi, choć film nie jest w pauzie → buforowanie
+            if (!frozenSince) frozenSince = wall;
+            if (!stalled && wall - frozenSince > STALL_MS) {
+                stalled = true;
+                stallAtMs = nowMs;
+                try { console.debug('[Multilektor] Netflix się zaciął (buforuje) — lektor czeka'); } catch (e) {}
+                if (enabled) { try { chrome.runtime.sendMessage({ action: 'TTS_PAUSE', reason: 'stall' }, function () { void chrome.runtime.lastError; }); } catch (e) {} }
+            }
+            // syncLastWall NIE przesuwamy — po ruszeniu porównujemy z chwilą sprzed zacięcia
+            return stalled;
+        }
+        frozenSince = 0;
+        if (stalled) {
+            // film ruszył po zacięciu: przerwane zdanie od początku (jeśli lektor go nie skończył), reszta od bieżącego miejsca
+            stalled = false;
+            var S = window.__LektorSched;
+            markPassed(nowMs, true);
+            if (S) S.rearmAfterPause(subtitles, played, null, stallAtMs, nowMs, getOff());   // zacięcie ucina zdanie zawsze (także przy „Czytaj do końca”)
+            stallAtMs = -1;
+            try { console.debug('[Multilektor] Netflix ruszył po zacięciu — lektor wraca do filmu'); } catch (e) {}
+        } else if (wall - lastSeekEvtAt > 1500) {
+            // skok czasu bez zdarzenia przewinięcia (np. Netflix przeskoczył kawałek po zgubionych klatkach)
+            var expected = syncLastT + (wall - syncLastWall) * rate;
+            var d = nowMs - expected;
+            if (Math.abs(d) > JUMP_MS && wall - syncLastWall < 1500) {   // przerwa pętli > 1,5 s (np. przyduszona karta) — nie oceniamy
+                try { console.debug('[Multilektor] skok czasu filmu o ' + Math.round(d) + ' ms — lektor od bieżącego miejsca'); } catch (e) {}
+                if (enabled) { try { chrome.runtime.sendMessage({ action: 'TTS_CLEAR_BUFFER', reason: 'jump' }, function () { void chrome.runtime.lastError; }); } catch (e) {} }
+                if (d < 0) unmarkFrom(nowMs);
+                markPassed(nowMs, true);
+            }
+        }
+        syncLastT = nowMs; syncLastWall = wall;
+        return false;
+    }
+
     function rereadInterrupted() {
         var at = pausedAtMs;
         pausedAtMs = -1;
@@ -455,6 +558,7 @@ if (!('__lektorBufPauza' in window)) {
         if (!t) return;
         if (isBlockedPhrase(t)) return; // ignorujemy blokowane frazy
         if (window.__LIVEDUB_IS_BLOCKED__ && window.__LIVEDUB_IS_BLOCKED__(t)) return;
+        if (panelBlocked(t)) return;   // [AGENT-EXP] 2026-11-26
         var now = Date.now();
         if (t === liveLastText && now - liveLastAt < 15000) return; // ta sama kwestia — nie powtarzamy
         liveLastText = t;
@@ -541,6 +645,9 @@ if (!('__lektorBufPauza' in window)) {
             var v = getVideo();
             if (!v || subtitles.length === 0) return;
             var nowMs = v.currentTime * 1000;
+            // [FIX 2026-11-24] zacięcie / skok Netflixa — lektor czeka albo łapie film od bieżącego miejsca
+            var isStalled = false;
+            try { isStalled = syncGuard(v, nowMs); } catch (e) {}
             // [AGENT-EXP] 2026-10-20: film GRA na widocznej karcie → kwestie dalej niż PRELOAD_NEAR_MS idą do syntezy
             // najwyżej 1 na PRELOAD_FAR_GAP_MS. Po resecie (nowa partia napisów Netflixa, pauza) cały zapas (3 min)
             // leciał naraz, 6 wątków syntezy zajmowało procesor i obraz filmu gubił klatki („przeskakuje”).
@@ -552,7 +659,7 @@ if (!('__lektorBufPauza' in window)) {
             if (nfSrcSent !== srcName + subtitles.length) { nfSrcSent = srcName + subtitles.length; S.setSource(srcName, subtitles.length); }
             S.tick({
                 list: subtitles, nowMs: nowMs, off: getOff(), rate: v.playbackRate || 1, lookaheadMs: LOOKAHEAD,
-                budget: S.budgetFor(v), canPlay: S.canPlay(v), preloaded: preloaded, played: played,
+                budget: S.budgetFor(v), canPlay: S.canPlay(v) && !isStalled, preloaded: preloaded, played: played,
                 preroll: (engine === 'online' && remoteVoice) ? REMOTE_PREROLL : 0,
                 extra: { platform: 'netflix' },
                 allowPreload: function (c, i, st) {
@@ -564,6 +671,7 @@ if (!('__lektorBufPauza' in window)) {
                     if (st > recAheadMs) recAheadMs = st;
                 },
                 onPlay: function (sub) {
+                    if (isBlockedPhrase(sub.text) || panelBlocked(sub.text)) return false;   // [AGENT-EXP] 2026-11-26: przed logiem — zablokowane nie trafia do „🔊”
                     pushSpoken(sub.text);
                     spokenWords += (sub.words || 0);
                     recentSpoken.push({ t: sub.text, w: sub.words || 0 });
@@ -768,6 +876,7 @@ if (!('__lektorBufPauza' in window)) {
         var s = key ? subSources[key] : null;
         activeSrcKey = s ? s.key : null;
         subtitles = s ? s.cues.slice() : [];
+        panelStatus(subtitles.length ? 'Napisy Netflix: ' + subtitles.length + ' kwestii' : '');   // [AGENT-EXP] 2026-11-26
         // [AGENT-EXP] 2026-11-17] Plik należy do TEGO odcinka, w którym lektor go czyta. Netflix pobiera napisy
         // nowego odcinka jeszcze przed zmianą adresu — tagowanie przy pobraniu dawało cenzorowi stary odcinek
         // i wyciszanie w miejscach, gdzie nikt nie mówi.
@@ -880,7 +989,8 @@ if (!('__lektorBufPauza' in window)) {
 
     window.addEventListener('message', function (e) {
         if (e.source !== window || !e.data || !e.data.type) return;
-        if (e.data.type !== 'LIVEDUB_SUBTITLE_DATA') return;
+        // [FIX 2026-11-25] REPLAY = napisy złapane przez hak, zanim ten skrypt zaczął słuchać (pierwszy film po wczytaniu strony)
+        if (e.data.type !== 'LIVEDUB_SUBTITLE_DATA' && e.data.type !== 'LIVEDUB_SUBTITLE_REPLAY') return;
         if (fileMode) return; // napisy z pliku mają pierwszeństwo przed napisami strony
         if (subSrcMode !== 'both') return;   // [AGENT-EXP] 2026-11-14: wybrano czytanie wyłącznie z ekranu
         var src = e.data.source || {};
@@ -923,6 +1033,8 @@ if (!('__lektorBufPauza' in window)) {
         applyActiveSource(nextKey, nextKey !== activeSrcKey);
         schedule();
     });
+    // [FIX 2026-11-25] słuchamy już — poproś hak (inject.js, start przy document_start) o napisy złapane wcześniej
+    try { window.postMessage({ type: 'LIVEDUB_SUBTITLE_REPLAY_REQ' }, location.origin); } catch (e) {}
 
     // --- Napisy z pliku (popup: „📂 Wczytaj plik z napisami”) — nadpisują napisy ze strony ---
     var fileMode = false;
@@ -969,6 +1081,7 @@ if (!('__lektorBufPauza' in window)) {
                     if (!t || (window.__LIVEDUB_IS_BLOCKED__ && window.__LIVEDUB_IS_BLOCKED__(t))) return null;
                     return t ? { id: 'file_' + i, text: t, startMs: c.startMs, endMs: c.endMs, words: t.split(/\s+/).length } : null;
                 }).filter(Boolean);
+                panelStatus(fileSrcName + ': ' + subtitles.length + ' kwestii');   // [AGENT-EXP] 2026-11-26
                 spokenWords = 0;
                 recentSpoken.length = 0;
                 recAheadMs = 0;

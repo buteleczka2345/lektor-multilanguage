@@ -1,5 +1,5 @@
 import { extTrJobPush, extTrJobCancel, gtabTranslateText, extTrTranslateLive, extTrTranslateList, extTrRaceOne } from './ext_net.js'; // [AGENT-EXP] extTrRaceOne
-import { cacheGetVideo, cachePutVideo, cacheStats, cacheClear } from './subs_cache.js';
+import { cacheGetVideo, cachePutVideo, cacheDelVideo, cacheStats, cacheClear } from './subs_cache.js';   // [AGENT-EXP] 2026-11-26: cacheDelVideo
 import { subsDbSearch, subsDbGet } from './subs_db.js';
 import '../../assets/domain_lists.js'; // [FIX 2026-11-02] 📋 wspólne listy domen → globalThis.__LektorDomains
 const DL = globalThis.__LektorDomains;
@@ -1504,6 +1504,7 @@ try {
         if (msg.action === 'PAMIEC_VIDEO_GET') p = cacheGetVideo(msg.key).then((data) => ({ ok: true, data }));
         else if (msg.action === 'PAMIEC_VIDEO_PUT') p = cachePutVideo(msg.key, msg.data).then(() => ({ ok: true }));
         else if (msg.action === 'PAMIEC_STATS') p = cacheStats().then((stats) => ({ ok: true, stats }));
+        else if (msg.action === 'PAMIEC_VIDEO_DEL') p = cacheDelVideo(msg.key).then(() => ({ ok: true }));   // [AGENT-EXP] 2026-11-26: 🔄 w karcie Status
         else if (msg.action === 'PAMIEC_CLEAR') p = cacheClear().then(() => ({ ok: true }));
         if (!p) return;
         p.then(sendResponse).catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));

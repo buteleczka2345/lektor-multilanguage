@@ -116,7 +116,26 @@
         if (p === lastPath) return;
         lastPath = p;
         sources.forEach(function (s) { s.fp = ''; });
+        kept.clear();
     }
+
+    // [FIX 2026-11-25] Hak startuje już przy document_start (manifest, świat MAIN), a lektor (content.js) dopiero przy
+    // document_idle. Pierwszy film otwarty od razu na /watch/ pobierał napisy, zanim ktokolwiek słuchał — pasek i lektor
+    // ruszały dopiero od następnego odcinka. Zapamiętujemy więc kwestie bieżącego tytułu i na prośbę lektora
+    // (REPLAY_REQ) wysyłamy je drugi raz osobnym typem (REPLAY), żeby inni słuchacze MSG nie dostali dubli.
+    var kept = new Map();   // klucz źródła → { source, cues }
+    function keep(src, cues) {
+        var k = kept.get(src.key);
+        if (!k) { k = { source: { key: src.key, url: src.url }, cues: [] }; kept.set(src.key, k); }
+        k.cues = k.cues.concat(cues);
+    }
+    window.addEventListener('message', function (e) {
+        if (e.source !== window || !e.data || e.data.type !== 'LIVEDUB_SUBTITLE_REPLAY_REQ') return;
+        checkPath();
+        kept.forEach(function (k) {
+            if (k.cues.length) window.postMessage({ type: 'LIVEDUB_SUBTITLE_REPLAY', subtitles: k.cues, source: k.source }, location.origin);
+        });
+    });
 
     function inspect(url, text) {
         if (typeof text !== 'string' || text.length < 20 || !looksLikeTtml(text)) return;
@@ -128,6 +147,7 @@
         try { cues = parseTtml(text, src.key); } catch (e) { console.warn('[Multilektor] napisy Netflixa:', e); return; }
         if (!cues.length) return;
         src.fp = fp;
+        keep(src, cues);
         window.postMessage({ type: MSG, subtitles: cues, source: { key: src.key, url: src.url } }, location.origin);
     }
 

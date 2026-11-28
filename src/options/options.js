@@ -44,7 +44,8 @@ const SCHEMA = [
     { k: 'extTrNonEnCloud', t: 'bool', def: true, label: 'Angielski lokalnie, inne języki w chmurze', hint: 'Przy silniku „Lokalny”: napisy po angielsku tłumaczy Translator Chrome (ze słownikiem fraz), a każdy inny język od razu Bing (gdy zawiedzie — Google / DeepL). Język ze ścieżki napisów albo z samej kwestii. Wyłączone = jak dawniej (YouTube lokalnie, reszta Bingiem).' },
     { k: 'ytTlangPl', t: 'bool', def: true, label: 'YouTube: polskie napisy z tłumaczenia YouTube (jak Live Dubbing)', hint: 'Lektor najpierw prosi YouTube o „Automatyczne tłumaczenie → polski” — tłumaczy serwer YouTube, bez limitu i bez kluczy. Gdy film tego nie ma, tłumaczy lektor jak dotąd (Translator Chrome / Bing). Dotyczy trybu napisów „auto” na YouTube.' },   // [AGENT-EXP] 2026-10-21
     // [AGENT-EXP] 2026-10-15 — całe zdania zamiast kawałków (lokalny Translator Chrome i silniki sieciowe).
-    { k: 'lektorBar', t: 'bool', def: true, label: '📊 Pasek lektora: nagrany dźwięk do przodu', hint: 'Cienki pasek na dole filmu, zgodny z jego osią czasu: pomarańczowe = dźwięk lektora już nagrany, zielone = przeczytane, jasnoszare = tekst gotowy, dźwięku jeszcze nie ma, ciemne = czeka na tłumaczenie, biała kreska = bieżące miejsce. Obok: na ile minut do przodu lektor ma nagrany dźwięk.' },   // [AGENT-EXP] 2026-10-17
+    // [AGENT-EXP] 2026-11-26: opis uzupełniony o to, co było w popupie (dolna linia, ⏱, ⏭)
+    { k: 'lektorBar', t: 'bool', def: true, label: '📊 Pasek lektora: nagrany dźwięk do przodu', hint: 'Cienki pasek na dole filmu, zgodny z jego osią czasu. Górna linia: zielone = przeczytane, pomarańczowe = dźwięk lektora już nagrany, jasnoszare = tekst gotowy, dźwięku jeszcze nie ma, ciemne = czeka na tłumaczenie, biała kreska = bieżące miejsce. Dolna linia: białe = obejrzane, pomarańczowe = zapas nagrań. Obok: na ile minut do przodu lektor ma nagrany dźwięk, ⏱ opóźnienie lektora, ⏭ pominięte kwestie (ostatnie 10 min).' },   // [AGENT-EXP] 2026-10-17
     { k: 'extTrContext', t: 'bool', def: true, label: 'Tłumacz z kontekstem (do pauzy w mowie)', hint: 'Kolejne kwestie idą do tłumacza razem — aż do dłuższej przerwy w mowie (2 s), najwyżej 8 kwestii — więc tłumacz widzi, co było przed i po (ty / wy, on / ona). Lektor dalej czyta kwestia po kwestii. Gdy tłumacz pomiesza linie, te kwestie są tłumaczone pojedynczo. Wyłączone = każda kwestia osobno.' },   // [AGENT-EXP] 2026-10-17
     { k: 'extTrJoinSentences', t: 'bool', def: true, label: 'Tłumacz całe zdania', hint: 'Kwestie, które są kawałkami jednego zdania („I told you that if you” + „came back, I’d leave.”), idą do tłumacza razem — tłumaczenie ma sens zamiast urywków (YouTube, całe napisy, Łowca, LIVE, OCR). Na żywo niedokończone zdanie czeka na dalszy ciąg (do ~6 s), więc lektor zaczyna chwilę później.' },
     { k: 'extTrChunk', t: 'select', def: 'mieszane', label: 'Wielkość porcji', hint: 'Ile wyrazów w jednym zapytaniu; „mieszane” losuje za każdym razem', options: [
@@ -76,7 +77,7 @@ const SCHEMA = [
     { k: 'cenzorLenMode', t: 'select', def: 'normal', label: 'Długość słowa', hint: 'Dłuższe przekleństwo trzymane dłużej', options: [
       ['off', 'wyłącz'], ['normal', 'normalnie'], ['strong', 'mocno']] },
     // [FIX 2026-11-21] „napis wisi dłużej niż mowa” (cenzor_main.js → tailAltTimes)
-    { k: 'cenzorTailFix', t: 'bool', def: true, label: 'Napis wisi dłużej niż mowa — szersza cisza', hint: 'Gdy kwestia trwa wyraźnie dłużej, niż potrzeba na jej tekst, cisza obejmuje oba możliwe miejsca przekleństwa (od początku kwestii i rozłożone na całą). Mniej przecieków, czasem dłuższa cisza. Tempo mowy dobierane z wczytanych napisów.' },
+    { k: 'cenzorTailFix', t: 'bool', def: true, label: 'Napis wisi dłużej niż mowa — celniejsze cięcie', hint: 'Gdy kwestia trwa wyraźnie dłużej, niż potrzeba na jej tekst, cisza obejmuje oba możliwe miejsca przekleństwa (od początku kwestii i rozłożone na całą); przy wyraźnym ogonie wystarcza to wcześniejsze, więc cisza jest krótsza. Tempo mowy dobierane z wczytanych napisów.' },
     // [FIX 2026-11-21] wybór sposobu liczenia, KIEDY pada słowo w pobranych napisach (cenzor_main.js → wordTimesInCue)
     { k: 'cenzorTimingMode', t: 'select', def: 'legacy', label: 'Celowanie w słowo (pobrane napisy)', hint: 'legacy = proporcje liter + pauzy po przecinku/kropce (bezpieczny). pmtpos = miejsce słowa z modelu PMT, cisza dalej z suwaków Wstecz/Przód. pmt = całe okna z modelu (diagnostyka). Prawdziwe czasy słów z YouTube zawsze wygrywają.', options: [
       ['legacy', 'legacy — proporcje + pauzy (domyślnie)'], ['pmtpos', 'pmtpos — miejsce słowa z modelu PMT'], ['pmt', 'pmt — okna w całości z modelu']] },
@@ -93,7 +94,8 @@ const SCHEMA = [
   { sec: '🖥️ Wygląd i bufor', sub: 'Panel lektora, nakładka i nagrania.', items: [
     // [AGENT-EXP] 2026-10-17 — pokazywanie paneli w lewym dolnym rogu (sub_panel.js, dom_content.js, lektor-controls.js)
     { k: 'lektorPanelOn', t: 'bool', def: true, label: 'Pokazuj panel „🎤 Lektor — co mówię”', hint: 'Panel w lewym dolnym rogu filmu z listą czytanych zdań. Wył. = całkiem niewidoczny (także pigułka „🎤 Lektor”); lektor czyta dalej.' },
-    { k: 'lektorControlsOn', t: 'bool', def: true, label: 'Pokazuj pasek ◄ ► (przewijanie, prędkość, przesunięcie lektora)', hint: 'Mały pasek w lewym dolnym rogu: ◄ ► przewija film o 5 s, − + zmienia prędkość lektora, −1s/+1s przesuwa lektora. Wył. = całkiem niewidoczny (także pigułka 🎤).' },
+    // [AGENT-EXP] 2026-11-26: opis po scaleniu paska z panelem 🎤
+    { k: 'lektorControlsOn', t: 'bool', def: true, label: 'Pokazuj w panelu rząd ◄ − 1.0x + ► (przewijanie, prędkość lektora)', hint: 'Rząd w panelu „🎤 Lektor — co mówię”: ◄ ► przewija film o 5 s, − + zmienia prędkość lektora. Wył. = rząd ukryty, reszta panelu zostaje.' },
     { k: 'uiScale', t: 'range', def: 100, min: 80, max: 200, step: 10, unit: '%', label: 'Skala panelu', hint: 'Panel „Lektor — co mówię" na filmie' },
     { k: 'captionOverlay', t: 'bool', def: false, label: 'Nakładka z czytanym tekstem', hint: 'Przeciągana na ekranie' },
     { k: 'liveBufTTLDays', t: 'select', def: '0', label: 'Nagrania lektora znikają po', hint: '0 = domyślne 3 dni', options: [
@@ -584,7 +586,8 @@ async function aitReadFile(file) {
 async function aitMemSave(pairs, engine) {
   if (!pairs.length) return;
   try {
-    const r = await chrome.storage.local.get([AI_MEM_KEY]);
+    const r = await chrome.storage.local.get([AI_MEM_KEY, 'pamiecTlumaczenOn']);
+    if (r.pamiecTlumaczenOn === false) return;   // [AGENT-EXP] 2026-11-26: przełącznik 💾 Pamięć tłumaczeń
     const mem = (r && r[AI_MEM_KEY] && typeof r[AI_MEM_KEY] === 'object') ? r[AI_MEM_KEY] : {};
     const now = Date.now();
     pairs.forEach(([src, pl]) => { if (src && pl) mem[aitHash(src)] = { src: String(src).slice(0, 2000), pl: String(pl).slice(0, 2000), engine, ts: now }; });
@@ -849,8 +852,19 @@ function buildSubTranslator() {
 // Bez TTL: siedzi aż użytkownik sam skasuje. Limit 5000 wpisów (LRU) — ochrona przed limitem ~10 MB.
 // ---------------- Pamięć napisów (90 dni) ----------------
 // Całe napisy odcinków + pojedyncze tłumaczenia sieciowe w IndexedDB service workera (subs_cache.js).
+// [AGENT-EXP] 2026-11-26: przełącznik WŁ./WYŁ. pamięci (klucz w chrome.storage.local, domyślnie WŁ.)
+function memToggle(s, key, text) {
+  const lab = el('label', { style: 'display:flex;gap:8px;align-items:center;font-size:14px;margin:6px 0;' });
+  const cb = el('input', { type: 'checkbox' });
+  cb.checked = true;
+  chrome.storage.local.get([key], (d) => { cb.checked = !(d && d[key] === false); });
+  cb.addEventListener('change', () => chrome.storage.local.set({ [key]: cb.checked }, () => setStatus(cb.checked ? '✅ ' + text + ': włączone' : '⏸ ' + text + ': wyłączone', 'ok')));
+  lab.appendChild(cb); lab.appendChild(document.createTextNode(' Włącz — ' + text));
+  s.appendChild(lab);
+}
 function buildSubsMemory() {
   const s = section('🧠 Pamięć napisów (90 dni)', 'Przetłumaczone napisy filmów i odcinków (YouTube, iQIYI, WeTV, Viki, Bilibili) oraz każde zdanie przetłumaczone przez sieć. Po powrocie do filmu lektor bierze je z pamięci — bez pobierania i tłumaczenia. Wpis kasuje się sam po 90 dniach od ostatniego użycia.', true);
+  memToggle(s, 'pamiecNapisowOn', 'zapamiętuj napisy');
   const info = el('div', { class: 'note' }, 'Ładuję…');
   s.appendChild(info);
   const btns = el('div', { class: 'btns' });
@@ -880,6 +894,7 @@ function buildSubsMemory() {
 
 function buildAiMemory() {
   const s = section('💾 Pamięć tłumaczeń', 'Teksty przetłumaczone przez AI Subtitle Translator i tłumaczenie sieciowe — zapisane na stałe, kasujesz kiedy chcesz.', true);
+  memToggle(s, 'pamiecTlumaczenOn', 'zapamiętuj tłumaczenia');
   const search = el('input', { type: 'text', placeholder: 'Szukaj w zapisanych (PL lub oryginał)…', style: 'width:100%;box-sizing:border-box;margin-top:6px;' });
   s.appendChild(search);
   const list = el('div', { id: 'aiMemList' });

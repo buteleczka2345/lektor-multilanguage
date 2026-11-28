@@ -51,7 +51,7 @@
 
         <!-- [AGENT-EXP] 2026-11-14: jedno miejsce, w którym widać, co NAPRAWDĘ robi lektor i cenzor -->
         <div class="card" data-mod="status" id="statusCard">
-            <div class="card-head"><b>Status</b><span class="pill" id="statusPill">—</span></div>
+            <div class="card-head"><b>Status</b><span style="display:flex;align-items:center;gap:6px;"><!-- [AGENT-EXP] 2026-11-26 --><button type="button" class="mini" id="statusRefresh" style="width:28px;font-size:12px;" title="Odśwież napisy: zapomnij napisy tego filmu i przeładuj stronę">🔄</button><span class="pill" id="statusPill">—</span></span></div>
             <div id="statusLines" class="footnote">—</div>
         </div>
         <div class="card hero switch-row" data-mod="lektor">
@@ -203,11 +203,8 @@
         <div class="card" data-mod="pasek">
             <div class="card-head"><b>📊 Pasek lektora</b></div>
             <label class="check" style="margin-top:0;"><input type="checkbox" id="lektorBarCheck"> Pokazuj na filmie</label>
-            <div class="footnote" style="margin-top:4px;line-height:1.45;">
-                Górna linia: <b style="color:#2ecc71;">■</b> przeczytane · <b style="color:#ff9f1a;">■</b> dźwięk gotowy ·
-                <b style="color:#bbb;">■</b> tekst bez dźwięku · <b style="color:#555;">■</b> czeka na tłumaczenie.<br>
-                Dolna: białe = obejrzane, pomarańczowe = zapas nagrań. ⏱ opóźnienie lektora · ⏭ pominięte kwestie (10 min).
-            </div>
+            <!-- [AGENT-EXP] 2026-11-26: przełącznik panelu 🎤 (lektorPanelOn, jak w Ustawieniach); opis kolorów usunięty na życzenie -->
+            <label class="check"><input type="checkbox" id="lektorPanelCheck"> Pokazuj panel „🎤 Lektor — co mówię”</label>
         </div>
 
         <div class="card" data-mod="test">
@@ -333,6 +330,8 @@
             </select>
             <label class="check"><input type="checkbox" id="cenzorOnCheck"> 🔇 Dźwięk filmu — pobrane napisy (YouTube, Netflix, HBO Max)</label>
             <label class="check"><input type="checkbox" id="cenzorLiveCheck"> 🔇 Dźwięk filmu — tryb live (napisy z ekranu)</label>
+            <!-- [AGENT-EXP] 2026-11-28 (przeniesione z ⏱ Czasy ciszy): cisza na całe zdanie; suwaki dokładają ciszę przed i po zdaniu -->
+            <label class="check"><input type="checkbox" id="czSentence"> Wyciszaj całe zdanie z przekleństwem</label>
             <!-- [FIX 2026-11-16] kto ma pierwszeństwo: pobrane napisy / plik+live / live (ekran) -->
             <select id="cenzorPriority" class="mt" title="Skąd brać napisy — dla cenzora (wyciszanie dźwięku filmu) i lektora: pobrane napisy czy napisy z ekranu (live, np. Immersive Translate)">
                 <option value="file">Priorytet: pobrane napisy (lektor + cenzor; live po końcu pliku)</option>
@@ -341,6 +340,12 @@
             </select>
             <input type="text" id="censorCustomWords" class="text-input mt" placeholder="Własne słowa po przecinku; -słowo = wyjątek…">
             <div class="footnote warn" id="censorStatus">—</div>
+            <!-- [DIAG 2026-11-26] jakie słowo wyciszyło film (ostatnie 50) -->
+            <details class="mt" id="cenzorDiagBox">
+                <summary>🔎 Diagnostyka: co wyciszył cenzor</summary>
+                <div id="cenzorDiagLog" style="max-height:150px;overflow:auto;font-size:11px;white-space:pre-wrap;border:1px solid rgba(128,128,128,.4);border-radius:6px;padding:4px;margin-top:4px">—</div>
+                <button type="button" id="cenzorDiagClear" class="mt">Wyczyść</button>
+            </details>
         </div>
 
         <!-- [AGENT-EXP] 2026-11-14: czasy ciszy cenzora — same suwaki, bez opisów -->

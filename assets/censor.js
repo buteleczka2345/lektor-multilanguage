@@ -10,8 +10,8 @@
     'use strict';
 
     var DEFAULT_MODE = 'remove'; // 'remove' | 'beep' | 'replace' | 'dashes'
-    // [AGENT-EXP] 2026-11-17: tryb „dashes” — każde wykryte przekleństwo w tekście kwestii (napisy) zamieniamy
-    // na ten sam ciąg kresek, żeby w zdaniu było widać, że coś zostało wycięte (a nie znikało bez śladu).
+    // [AGENT-EXP] 2026-11-17: tryb „dashes” — każde wykryte przekleństwo w tekście kwestii czytanej przez lektora
+    // na ten sam ciąg kresek, żeby w zdaniu było widać, że coś zostało wycięte (a nie znikało bez śladu). Napisy na ekranie mają własną maskę (maskText → dashMask) — długość słowa, żeby nie skakało zawijanie.
     var DASH_MASK = '----------';
 
     // Lista polska (z userscriptu Wszystki14) + kuratorowane listy dla największych
@@ -43,6 +43,20 @@
             'gówniarz', 'gówniarze', 'gówniarzeria', 'osrać', 'obsrany', 'obsrana', 'srać', 'nasrać', 'sraczka',
             'szmata', 'szmato', 'szmaty', 'szmatława', 'dziwka', 'dziwki', 'dziwką', 'dziwce',
             'dupa', 'dupy', 'dupę', 'dupą', 'dupie',
+            // [FIX 2026-11-25] Uzupełnione formy i derywaty: test na 54 potocznych formach pokazał 24 braki
+            // („dupami”, „dupek”, „zasrany”, „wysrał”, „rucham”, „gówniara”…). Celowo POJEDYNCZE formy, nie rdzenie:
+            // „dup*” złapałby „duplikat”, „sr*” — „srokę” i „srogi”, „ruch*” — „ruch drogowy” i „ruchomy”.
+            'dupami', 'dupach', 'dupkom', 'dupkami', 'dupkach', 'dupka', 'dupki', 'dupków', 'dupek',
+            'dupcia', 'dupci', 'dupcią', 'dupnąć', 'dupnął', 'dupnęła', 'dupnięty', 'dupnięta',
+            'sram', 'srasz', 'srają', 'srając', 'srający', 'srająca', 'srające', 'srał', 'srała', 'srali',
+            'wysrać', 'wysrał', 'wysrała', 'wysrali', 'obsrać', 'obsrał', 'obsrała', 'obsrali',
+            'zasrany', 'zasrana', 'zasrane', 'zasrani', 'osrany', 'osrana', 'osrane', 'osrani',
+            'gówniara', 'gówniary', 'gówniarski', 'gówniarstwo',
+            'skurwysyństwo', 'skurwysyństwa', 'skurwysyństwem', 'skurwysyństw',
+            'kurwisko', 'kurwiska', 'kurwiszony', 'kurwiszon',
+            'cipsko', 'cipencja', 'fiutek', 'fiutka', 'fiutki', 'kutasik', 'kutasika',
+            'rucham', 'ruchasz', 'rucha', 'ruchają', 'ruchał', 'ruchała', 'ruchało', 'ruchali',
+            'ruchanie', 'ruchanka', 'ruchacz', 'wyruchać', 'wyruchał', 'wyruchała', 'wyruchanie',
             'cholery', 'cholera', 'cholerny', 'cholerna', 'pieprzyć', 'pieprzony', 'kurwić', 'pierdzić'],
         en: ['fuck', 'fucks', 'fucked', 'fucking', 'fuckin', 'fucker', 'fuckers', 'fuckup', 'fuckups',
             'fuckface', 'fuckwit', 'fucktard', 'clusterfuck', 'motherfucker', 'motherfuckers', 'motherfucking',
@@ -147,7 +161,9 @@
             'arrombado', 'arrombada', 'arrombados', 'arrombadas',
             'corno', 'cornos', 'corna', 'chifrudo',
             'desgraçado', 'desgraçada', 'desgraçados', 'desgraçadas',
-            'piroca', 'pica', 'picas', 'cacete', 'cacetada', 'cuzinho', 'cuzão',
+            // [FIX 2026-11-25] BEZ „pica”/„picas”: w polskim to medyczna nazwa zaburzenia łaknienia
+            // („Badanie pica i fok w Bałtyku” było wyciszane w całości). Zostaje „piroca”.
+            'piroca', 'cacete', 'cacetada', 'cuzinho', 'cuzão',
             'otário', 'otária', 'otários', 'babaca', 'babacas',
             'viado', 'bicha', 'boiola',
             'escroto', 'escrota', 'escrotos', 'escrotas'],
@@ -276,7 +292,9 @@
             'भोसड़ा', 'भोसड़ी', 'भोसड़ीके', 'गांड', 'गांडू', 'गांडफट', 'चूत', 'चूतड़', 'लौड़ा', 'लंड',
             'हरामखोर', 'हरामी', 'कमीना', 'कमीनी', 'कुत्ता', 'कुत्ती', 'कुत्ते', 'छिनाल', 'छिनाली',
             'झाटू', 'मूत', 'मूतना', 'टट्टी', 'हगना', 'सूअर', 'सूअरी'],
-        af: ['fok', 'fokken', 'gefok', 'fokking', 'fokker', 'fokkers', 'fok jou', 'poes', 'kak', 'kakken', 'kakhuis',
+        // [FIX 2026-11-25] BEZ samego „fok”: to polski dopełniacz liczby mnogiej od „foka” („obserwacja fok”).
+        // Afrikaans dalej łapie „fokken”, „fok jou”, „fokker”.
+        af: ['fokken', 'gefok', 'fokking', 'fokker', 'fokkers', 'fok jou', 'poes', 'kak', 'kakken', 'kakhuis',
             'piel', 'piele', 'pielkop', 'hoer', 'hoere', 'hoerhuis', 'moerse', 'naai', 'naaier',
             'slet', 'slette', 'teef', 'idioot', 'verdomp', 'verdomde'],
         bg: ['кур', 'кура', 'курва', 'курви', 'курво', 'курвар', 'еба', 'ебати', 'ебах', 'ебеш', 'ебем', 'еби',
@@ -439,7 +457,8 @@
     // [FIX 2026-11-21] Przekleństwa ZAKRYTE w napisach gwiazdkami/krzyżykami: „k***a”, „ch*j”, „f**k”, „p*******ć”,
     // samo „****”. W dźwięku filmu padają w całości, a granice \p{L} rozbijały je na kawałki, więc nie było ciszy.
     // Warunek: 1–3 litery + (≥1 znak maski + litera) albo ≥2 znaki maski. Nie łapie „*śmiech*”, „5*3”, „Mr*”.
-    var MASKED_RE = /(?<![\p{L}\p{N}*#])\p{L}{1,3}(?:[*#]{1,10}\p{L}{1,5}|[*#]{2,10}\p{L}{0,5})(?![\p{L}\p{N}*#])|(?<![\p{L}\p{N}*])\*{3,}(?![\p{L}\p{N}*])/gu;
+    // [FIX 2026-11-25] Sam ciąg gwiazdek dopiero od 4: „***” to w napisach znak sceny/przerwy, nie zakryte słowo.
+    var MASKED_RE = /(?<![\p{L}\p{N}*#])\p{L}{1,3}(?:[*#]{1,10}\p{L}{1,5}|[*#]{2,10}\p{L}{0,5})(?![\p{L}\p{N}*#])|(?<![\p{L}\p{N}*])\*{4,}(?![\p{L}\p{N}*])/gu;
 
     // Budujemy DWA dopasowywacze:
     //  * bounded   — (?<!\p{L}) słowo (?!\p{L}) — nie łapie 'ass' w 'class'
@@ -514,15 +533,28 @@
     // [AGENT-EXP] 2026-11-17: napisy NA EKRANIE (tryb „Kreski”) — to samo zdanie, ale tylko same słowa zamienione
     // na kreski. Bez sprzątania spacji i interpunkcji: to widoczny tekst odtwarzacza, nie mowa lektora, więc nic
     // poza przekleństwem nie może się przesunąć. Użycie: cenzor_main.js (podmiana w DOM napisów).
+    // [FIX 2026-11-25] Kreski dokładnie tej długości co słowo. Wcześniej KAŻDE przekleństwo dostawało 10 kresek,
+    // więc „kurwa” (5) rozciągała napis, a „chuj” (4) też — linia zmieniała szerokość i przeskakiwało zawijanie.
+    function dashMask(word) {
+        var w = String(word || ''), n = 0;
+        for (var i = 0; i < w.length; i++) {
+            var c = w.charCodeAt(i);
+            if (c >= 0xD800 && c <= 0xDBFF && i + 1 < w.length) i++;   // para zastępcza = jeden znak
+            n++;
+        }
+        return new Array(Math.max(2, n) + 1).join('-');
+    }
+
     function maskText(text) {
         var t = String(text || '');
         if (!t) return t;
+        if (!/[\p{L}\p{N}]/u.test(t)) return t;   // [FIX 2026-11-25] sam znak sceny („***”) — nie ruszamy napisu
         var ms = findMatches(t);
         if (!ms.length) return t;
         var out = '', last = 0;
         ms.forEach(function (m) {
             if (m.index < last) return;   // nakładające się dopasowania (dwa regexy) — liczy się pierwsze
-            out += t.slice(last, m.index) + DASH_MASK;
+            out += t.slice(last, m.index) + dashMask(m.word);
             last = m.index + String(m.word).length;
         });
         return out + t.slice(last);

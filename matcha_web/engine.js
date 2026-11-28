@@ -37,6 +37,20 @@ let log = () => {};
 const REPO = 'https://huggingface.co/machinekind/Matcha-TTS-PL-Edge-v2/resolve/main/';
 const INT8_FILES = ['voices.json', 'encoder_sdp_int8.onnx', 'decoder_t4_int8.onnx', 'vocoder.onnx'];
 const F32_FILES = ['voices.json', 'vocoder.onnx', 'encoder_sdp.onnx', 'decoder_t4.onnx'];
+// [AGENT-EXP] 2026-11-25: głosy ze zwykłym koderem (bez stochastycznego rytmu) — wczytane z folderu albo _3 z repo
+// Matcha-TTS-PL-Edge (v1). Komplet = ten sam układ, tylko encoder_int8.onnx / encoder.onnx.
+const DET_INT8_FILES = ['voices.json', 'encoder_int8.onnx', 'decoder_t4_int8.onnx', 'vocoder.onnx'];
+const DET_F32_FILES = ['voices.json', 'vocoder.onnx', 'encoder.onnx', 'decoder_t4.onnx'];
+const REPO_V1 = 'https://huggingface.co/machinekind/Matcha-TTS-PL-Edge/resolve/main/';
+const V1_VOICES = ['female_voxcpm_3', 'male_voxcpm_3'];
+// [AGENT-EXP] 2026-11-25: głosy z jednego pliku (repo Matcha-TTS-PL, folder onnx/) — koder, dekoder i wokoder w jednym grafie
+const FULL_FILES = ['voices.json', 'matcha_pl_t4.onnx'];
+const FULL_VOICES = {
+    male_voxcpm_1: 'https://huggingface.co/machinekind/Matcha-TTS-PL/resolve/main/onnx/',
+    female_voxcpm_1: 'https://huggingface.co/machinekind/Matcha-TTS-PL/resolve/main/onnx/female_voxcpm_1/',
+    male_voxcpm_3_pelny: 'https://huggingface.co/machinekind/Matcha-TTS-PL/resolve/main/onnx/male_voxcpm_3/',     // [AGENT-EXP] 2026-11-25: ~88 MB
+    female_voxcpm_3_pelny: 'https://huggingface.co/machinekind/Matcha-TTS-PL/resolve/main/onnx/female_voxcpm_3/',
+};
 const ready = new Map();   // głos → true (komplet jest) | Promise (sprawdzanie / pobieranie w toku)
 function idb(mode, fn) {   // fn(store) → wynik po zakończeniu transakcji
     return new Promise((resolve, reject) => {
@@ -58,12 +72,14 @@ async function ensureModel(voice) {
     const key = (f) => 'matcha/' + voice + '/' + f;
     const keys = (await idb('readonly', (st) => st.getAllKeys(IDBKeyRange.bound(key(''), key('￿'))))).result.map(String);
     const has = (f) => keys.includes(key(f));
-    if (INT8_FILES.every(has) || F32_FILES.every(has)) return;
-    const missing = INT8_FILES.filter((f) => !has(f));
+    if ([INT8_FILES, F32_FILES, DET_INT8_FILES, DET_F32_FILES, FULL_FILES, ['voices.json', 'matcha_pl_t2.onnx']].some((l) => l.every(has))) return;
+    const v1 = V1_VOICES.includes(voice);   // [AGENT-EXP] 2026-11-25: _3 tylko w starym repo, ze zwykłym koderem
+    const full = FULL_VOICES[voice];        // [AGENT-EXP] 2026-11-25: _1 — jeden plik ~140 MB
+    const missing = (full ? FULL_FILES : v1 ? DET_INT8_FILES : INT8_FILES).filter((f) => !has(f));
     for (let i = 0; i < missing.length; i++) {
         const f = missing[i];
         log('matcha-web-pobieranie', voice + '/' + f + ' (' + (i + 1) + '/' + missing.length + ') z HuggingFace…');
-        const r = await fetch(REPO + voice + '/' + f);
+        const r = await fetch(full ? full + f : (v1 ? REPO_V1 : REPO) + voice + '/' + f);
         if (!r.ok) throw new Error(f + ': HTTP ' + r.status);
         const data = new Uint8Array(await r.arrayBuffer());
         if (/\.onnx$/.test(f) && !(data.length > 1024 * 1024 && data[0] === 0x08)) throw new Error(f + ' nie wygląda na model ONNX');

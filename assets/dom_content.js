@@ -971,6 +971,49 @@ if (!('__lektorBufPauza' in window)) {
     var fileSubs = [], fileTimer = null, fileLookahead = 180000; // napisy z pliku
     var filePreloaded = new Set(), filePlayed = new Set();
 
+    // [FIX 2026-11-25] NAPISY NALEŻĄ DO FILMU. Po przejściu na inny film bez odświeżenia karty lektor (i cenzor, który
+    // dostaje od nas tę listę) dalej używał napisów poprzedniego filmu — cisza padała w losowych miejscach, po F5 znikała.
+    // Lista pamięta stronę (klucz jak w background fileSubsPageKey) i długość <video>, przy których ją wczytano.
+    // Inna strona albo film o innej długości w tym samym odtwarzaczu = lektor tej listy nie czyta, a cenzor jej nie bierze.
+    function czPageKey(href) {
+        try {
+            var u = new URL(href || location.href), keep = [];
+            ['v', 'id', 'video', 'vid', 'video_id', 'episode', 'ep', 'watch', 'movie', 'film', 'p'].forEach(function (k) { var x = u.searchParams.get(k); if (x) keep.push(k + '=' + x); });
+            return u.origin + u.pathname + '?' + keep.join('&');
+        } catch (e) { return String(href || ''); }
+    }
+    function czDur(v) { var d = v ? Number(v.duration) : NaN; return isFinite(d) && d > 0 ? d : 0; }
+    function czSameFilm(a, b) { return !a || !b || Math.abs(a - b) <= 2; }
+    var fileOwner = { page: '', key: '', dur: 0 }, otherFilm = { dur: 0, since: 0, done: false };
+    function setFileOwner() {
+        var v = null; try { v = getVideo(); } catch (e) {}
+        fileOwner = { page: location.href.split('#')[0], key: czPageKey(), dur: czDur(v) };
+        otherFilm = { dur: 0, since: 0, done: false };
+    }
+    // true = lista pasuje do filmu, który teraz gra (albo nie ma listy / nie da się tego sprawdzić)
+    function fileOwnerOk() {
+        if (!fileSubs.length || !fileOwner.key) return true;
+        if (fileOwner.key !== czPageKey()) return false;
+        var v = null; try { v = getVideo(); } catch (e) {}
+        var d = czDur(v);
+        if (d && !fileOwner.dur) fileOwner.dur = d;   // długość znana dopiero teraz — lista należy do tego filmu
+        return czSameFilm(fileOwner.dur, d);
+    }
+    // Inny film (nie reklama: > 90 s) gra w tym samym odtwarzaczu dłużej niż 6 s → stare napisy precz i Łowca szuka od nowa.
+    function checkOtherFilm() {
+        if (!fileSubs.length || !fileOwner.key || fileOwner.key !== czPageKey()) return;
+        var v = null; try { v = getVideo(); } catch (e) {}
+        var d = czDur(v);
+        if (!d || czSameFilm(fileOwner.dur, d) || d < 90) { otherFilm = { dur: 0, since: 0, done: false }; return; }
+        if (!czSameFilm(otherFilm.dur, d) || !otherFilm.since) { otherFilm = { dur: d, since: Date.now(), done: false }; return; }
+        if (otherFilm.done || Date.now() - otherFilm.since < 6000) return;
+        otherFilm.done = true;
+        try { console.log('[Lektor] inny film w odtwarzaczu (' + Math.round(d) + ' s ≠ ' + Math.round(fileOwner.dur) + ' s) — usuwam stare napisy, szukam nowych'); } catch (e) {}
+        autoSubs = null; manualFile = false; lastFile = null; fileMyLast = null;
+        dropFileSubs();
+        try { window.postMessage({ __lowca: 'cmd', cmd: 'reset' }, '*'); } catch (e) {}   // Łowca: bufor od nowa (lowca_napisow.js)
+    }
+
     // --- Offset napisów: global z panelu ⚙ + fallback z storage (gwarancja przy starcie strony) ---
     var storageOffsetMs = 0;
     function getOff() {
@@ -1318,6 +1361,51 @@ if (!('__lektorBufPauza' in window)) {
         applyPanelVisibility();
     }
 
+    // [AGENT-EXP] 2026-11-26: panel przesuwany — chwyć za nagłówek i przeciągnij; miejsce zapamiętane (lektorPanelPos, wspólne dla stron).
+    // Pigułka (panel zwinięty) stoi w tym samym miejscu i też się przeciąga; klik bez przesunięcia = rozwiń.
+    function makeDraggable(pairs) {   // pairs: [[element, uchwyt], ...] — wszystkie elementy dostają tę samą pozycję
+        var d = null, moved = false;
+        // zakotwiczenie od DOŁU (left + bottom): panel rozwija się z pigułki do góry
+        function place(x, b) {
+            x = Math.max(0, Math.min(window.innerWidth - 60, x));
+            b = Math.max(0, Math.min(window.innerHeight - 30, b));
+            pairs.forEach(function (p) { p[0].style.left = x + 'px'; p[0].style.bottom = b + 'px'; p[0].style.top = 'auto'; });
+        }
+        pairs.forEach(function (p) {
+            var el = p[0], h = p[1];
+            h.style.cursor = 'move';
+            h.addEventListener('mousedown', function (e) {
+                var c = e.target.closest && e.target.closest('button,input');
+                if (e.button !== 0 || (c && c !== h)) return;
+                d = { x0: e.clientX, y0: e.clientY, left: el.offsetLeft, bottom: window.innerHeight - el.offsetTop - el.offsetHeight };   // offset* = bez skali uiScale
+                moved = false;
+                e.preventDefault(); e.stopPropagation();
+            });
+            // po przeciągnięciu pigułki nie rozwijamy panelu
+            el.addEventListener('click', function (e) { if (moved) { moved = false; e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+        });
+        window.addEventListener('mousemove', function (e) {
+            if (!d) return;
+            if (!moved && Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) < 4) return;
+            moved = true;
+            place(d.left + e.clientX - d.x0, d.bottom - (e.clientY - d.y0));
+        }, true);
+        window.addEventListener('mouseup', function () {
+            if (!d) return;
+            d = null;
+            if (!moved) return;
+            setTimeout(function () { moved = false; }, 0);   // „click” zaraz po puszczeniu jest połknięty, następne kliknięcia działają
+            var s = pairs[0][0].style;
+            try { chrome.storage.local.set({ lektorPanelPos: { x: parseInt(s.left, 10), b: parseInt(s.bottom, 10) } }); } catch (e) {}
+        }, true);
+        try {
+            chrome.storage.local.get(['lektorPanelPos'], function (r) {
+                var p = r && r.lektorPanelPos;
+                if (p && isFinite(p.x) && isFinite(p.b)) place(p.x, p.b);   // stary zapis {x,y} (od góry) pomijamy
+            });
+        } catch (e) {}
+    }
+
     function createPanel() {
         if (panelBox) return;
         var root = document.body || document.documentElement;
@@ -1346,6 +1434,42 @@ if (!('__lektorBufPauza' in window)) {
         filterRow.appendChild(panelInput);
         filterRow.appendChild(mkBtn('＋ Blokuj', 'Dodaj frazę do blokad', function () { addUserPhrase(panelInput.value); panelInput.value = ''; }));
         panelBox.appendChild(filterRow);
+        // [AGENT-EXP] 2026-11-26: rząd przesunięcia jak w sub_panel.js (YouTube) — ten sam klucz subtitleOffsetMs, 👁 = cenzorPreview
+        var offRow = document.createElement('div');
+        offRow.style.cssText = 'display:flex;gap:4px;align-items:center;padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.12);';
+        var offVal = document.createElement('span');
+        offVal.style.cssText = 'flex:1;text-align:center;font-weight:700;color:#7ee0ff;';
+        var offMs = 0;
+        function showOff() { offVal.textContent = '🕒 ' + (offMs >= 0 ? '+' : '−') + (Math.abs(offMs) / 1000).toFixed(1).replace('.', ',') + ' s'; }
+        function setOff(ms) {
+            offMs = Math.max(-10000, Math.min(10000, Math.round(ms)));
+            showOff();
+            try { chrome.storage.local.set({ subtitleOffsetMs: offMs }); } catch (e) {}
+        }
+        offRow.appendChild(mkBtn('−1 s', 'Napisy 1 s wcześniej', function () { setOff(offMs - 1000); }));
+        offRow.appendChild(mkBtn('−0,1', 'Napisy 0,1 s wcześniej', function () { setOff(offMs - 100); }));
+        offRow.appendChild(offVal);
+        offRow.appendChild(mkBtn('+0,1', 'Napisy 0,1 s później', function () { setOff(offMs + 100); }));
+        offRow.appendChild(mkBtn('+1 s', 'Napisy 1 s później', function () { setOff(offMs + 1000); }));
+        offRow.appendChild(mkBtn('0', 'Wyzeruj przesunięcie', function () { setOff(0); }));
+        var pvBtn = mkBtn('👁', 'Podgląd napisów na filmie (sprawdź przesunięcie)', function () {
+            try { chrome.storage.local.set({ cenzorPreview: pvBtn.dataset.on !== '1' }); } catch (e) {}
+        });
+        function showPv(on) { pvBtn.dataset.on = on ? '1' : ''; pvBtn.style.background = on ? 'rgba(255,212,0,0.45)' : 'rgba(255,255,255,0.12)'; }
+        offRow.appendChild(pvBtn);
+        panelBox.appendChild(offRow);
+        try { var lcRow = window.__LektorControlsRow && window.__LektorControlsRow(); if (lcRow) panelBox.appendChild(lcRow); } catch (e) {}   // [AGENT-EXP] 2026-11-26: ◄ − 1.0x + ► z lektor-controls.js — jeden panel
+        showOff();
+        try {
+            chrome.storage.local.get(['subtitleOffsetMs', 'cenzorPreview'], function (r) {
+                offMs = Number(r && r.subtitleOffsetMs) || 0; showOff(); showPv(!!(r && r.cenzorPreview));
+            });
+            chrome.storage.onChanged.addListener(function (ch, area) {
+                if (area !== 'local') return;
+                if (ch.subtitleOffsetMs) { offMs = Number(ch.subtitleOffsetMs.newValue) || 0; showOff(); }
+                if (ch.cenzorPreview) showPv(!!ch.cenzorPreview.newValue);
+            });
+        } catch (e) {}
         panelBlocked = document.createElement('div');
         panelBlocked.style.cssText = 'padding:3px 8px;border-bottom:1px solid rgba(255,255,255,0.12);max-height:54px;overflow-y:auto;';
         panelBox.appendChild(panelBlocked);
@@ -1356,9 +1480,10 @@ if (!('__lektorBufPauza' in window)) {
         panelPill = document.createElement('button');
         panelPill.textContent = '🎤 Lektor';
         panelPill.title = 'Pokaż podgląd lektora';
-        panelPill.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:2147483647;display:none;align-items:center;gap:5px;background:rgba(18,18,22,0.94);color:#eee;border:1px solid rgba(255,255,255,0.25);border-radius:999px;padding:4px 10px;font:10px system-ui,sans-serif;cursor:pointer;';
+        panelPill.style.cssText = 'position:fixed;left:10px;bottom:130px;z-index:2147483647;display:none;align-items:center;gap:5px;background:rgba(18,18,22,0.94);color:#eee;border:1px solid rgba(255,255,255,0.25);border-radius:999px;padding:4px 10px;font:10px system-ui,sans-serif;cursor:pointer;';   // [AGENT-EXP] 2026-11-26: pigułka nad paskiem odtwarzacza
         panelPill.addEventListener('click', function () { setPanelVisible(true); });
         root.appendChild(panelPill);
+        makeDraggable([[panelBox, head], [panelPill, panelPill]]);   // [AGENT-EXP] 2026-11-26
         renderBlockedChips();
         applyPanelVisibility();
     }
@@ -1425,6 +1550,7 @@ if (!('__lektorBufPauza' in window)) {
             filePreloaded.clear();
             filePlayed.clear();
         }
+        if (!keep || !fileOwner.key) setFileOwner();   // [FIX 2026-11-25] napisy należą do TEGO filmu
         restoreVolume();
         startFileLoop();
     }
@@ -1468,6 +1594,7 @@ if (!('__lektorBufPauza' in window)) {
             }).filter(Boolean);
             filePreloaded.clear();
             filePlayed.clear();
+            setFileOwner();   // [FIX 2026-11-25]
             restoreVolume();
             startFileLoop();
         } else {
@@ -1480,16 +1607,20 @@ if (!('__lektorBufPauza' in window)) {
     // tłumaczenia) i co 15 s (cenzor mógł wystartować później albo zmienić się film). `orig` = tekst oryginału.
     var czSig = '', czAt = 0;
     setInterval(function () {
+        try { checkOtherFilm(); } catch (e) {}   // [FIX 2026-11-25] inny film w tym samym odtwarzaczu
+        // [FIX 2026-11-25] lista z poprzedniego filmu / innej strony → cenzor dostaje PUSTĄ listę (nie tnie ze starych napisów)
+        var mine = fileOwnerOk(), list = mine ? fileSubs : [];
         var n = 0;
-        for (var i = 0; i < fileSubs.length; i++) if (fileSubs[i] && fileSubs[i].text) n++;
-        var sig = fileSubs.length + '|' + n + '|' + (fileSubs[0] ? fileSubs[0].id : '');
+        for (var i = 0; i < list.length; i++) if (list[i] && list[i].text) n++;
+        var sig = list.length + '|' + n + '|' + (list[0] ? list[0].id : '') + '|' + fileOwner.key + '|' + Math.round(fileOwner.dur);
         if (sig === czSig && Date.now() - czAt < 15000) return;
-        if (!fileSubs.length && !czSig) return;
-        czSig = fileSubs.length ? sig : ''; czAt = Date.now();
+        if (!list.length && !czSig) return;
+        czSig = list.length ? sig : ''; czAt = Date.now();
         try {
-            window.postMessage({ __lektorCenzor: 'cues', key: 'lektor', cues: fileSubs.map(function (c) {
-                return { startMs: c.startMs, endMs: c.endMs, text: c.text || '', orig: typeof c.src === 'string' ? c.src : '' };
-            }) }, location.origin);
+            window.postMessage({ __lektorCenzor: 'cues', key: 'lektor', page: list.length ? fileOwner.page : '', dur: list.length ? fileOwner.dur : 0,
+                cues: list.map(function (c) {
+                    return { startMs: c.startMs, endMs: c.endMs, text: c.text || '', orig: typeof c.src === 'string' ? c.src : '' };
+                }) }, location.origin);
         } catch (e) {}
     }, 2000);
 
@@ -1499,6 +1630,7 @@ if (!('__lektorBufPauza' in window)) {
             if (!enabled || fileSubs.length === 0) return;
             var v = getVideo();
             if (!v) return;
+            if (!fileOwnerOk()) return;   // [FIX 2026-11-25] napisy innego filmu / innej strony — lektor ich nie czyta
             if (v.paused && window.__lektorBufPauza === false) return;   // [AGENT-EXP] pauza: tylko buforowanie, bez czytania
             // [FIX 2026-11-02] wspólny harmonogram (assets/lektor_scheduler.js): okno kwestii, tempo filmu, czytanie tylko na
             // widocznej karcie z grającym filmem (wcześniej plik czytał też w karcie w tle)

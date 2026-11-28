@@ -44,10 +44,12 @@ function matchaWebEngine() {
     }
     return mwModP;
 }
+// [AGENT-EXP] 2026-11-25: nazwa głosu Matcha 🌐 = nazwa folderu w pamięci ('matcha/<głos>/…'); wcześniej tylko dwa głosy _2.
+function matchaWebVoiceId(v) { return /^[A-Za-z0-9_-]{1,64}$/.test(String(v || '')) ? String(v) : 'male_voxcpm_2'; }
 // Ustawienia jak głosy w serwer_matcha.py: zwykły temp 0.8 / długość 0.8, ':elegancki' 0.6 / 0.92 (speed 1 — tempo ustawia odtwarzacz).
 function matchaWebSynthesize(text, pilne, ticket) {   // [FIX 2026-11-02] ticket: znacznik zadania (awans przez promote)
     const parts = matchaVoice.split(':');
-    const voice = parts[1] === 'female_voxcpm_2' ? 'female_voxcpm_2' : 'male_voxcpm_2';
+    const voice = matchaWebVoiceId(parts[1]);   // [AGENT-EXP] 2026-11-25: każdy głos z pamięci (np. _3, wczytane z folderu)
     const el = parts[2] === 'elegancki';
     return matchaWebEngine().then((m) => m.synthesizeWav(text, { voice, steps: 4, temperature: el ? 0.6 : 0.8, lengthScale: el ? 0.92 : 0.8, pilne: !!pilne, tryb: matchaWebTryb, ticket: ticket || null }));
 }
@@ -1726,7 +1728,7 @@ function ttsMainHandler(msg, _sender, sendResponse) {   // [AGENT-EXP] nazwany �
             return true;
         }
         if (ttsEngine === 'matcha') {
-            if (/^web:/.test(matchaVoice)) matchaWebEngine().then((m) => m.warmUp({ voice: matchaVoice.split(':')[1] === 'female_voxcpm_2' ? 'female_voxcpm_2' : 'male_voxcpm_2', tryb: matchaWebTryb })).catch(() => {});   // [AGENT-EXP] 2026-10-24: model wczytany zawczasu
+            if (/^web:/.test(matchaVoice)) matchaWebEngine().then((m) => m.warmUp({ voice: matchaWebVoiceId(matchaVoice.split(':')[1]), tryb: matchaWebTryb })).catch(() => {});   // [AGENT-EXP] 2026-10-24: model wczytany zawczasu
             sendResponse({ status: 'initialized', engine: 'matcha' });
             return true;
         }

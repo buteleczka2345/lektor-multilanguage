@@ -609,6 +609,22 @@ async function init() {
             });
         } catch (e) { /* brak API — nic nie rób */ }
     })();
+    // [DIAG 2026-11-26] dziennik wyciszeń cenzora (zapisuje cenzor_bridge.js) — najnowsze na górze
+    (() => {
+        const box = $('cenzorDiagLog'), clr = $('cenzorDiagClear');
+        if (!box) return;
+        const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+        const render = (log) => {
+            if (!Array.isArray(log) || !log.length) { box.textContent = 'Brak wyciszeń.'; return; }
+            box.textContent = log.slice().reverse().map((e) => {
+                const why = (e.why || []).map((x) => '„' + x.w + '” [' + x.src + ']  ←  ' + x.t).join('\n   ');
+                return fmt(e.at) + (e.len ? '  (cisza ' + String(e.len).replace('.', ',') + ' s)' : '') + '  ' + (why || '(brak danych o słowie)');
+            }).join('\n');
+        };
+        chrome.storage.local.get('cenzorDiagLog', (r) => render(r && r.cenzorDiagLog));
+        chrome.storage.onChanged.addListener((ch, area) => { if (area === 'local' && ch.cenzorDiagLog) render(ch.cenzorDiagLog.newValue); });
+        if (clr) clr.addEventListener('click', () => chrome.storage.local.set({ cenzorDiagLog: [] }));
+    })();
     // ===== Cenzura przekleństw — wszystkie języki naraz =====
     const censorSpeech = $('censorSpeechCheck');
     const censorModeSel = $('censorModeSelect');
@@ -696,6 +712,17 @@ censorWords.addEventListener('change', () => {
         })();
     }
 
+    // ===== [AGENT-EXP] 2026-11-28: cisza na całe zdanie (Wstecz/Przód = dodatkowo przed/po zdaniu) =====
+    (function () {
+        const box = $('czSentence');
+        if (!box) return;
+        try {
+            chrome.storage.local.get('cenzorSentence', (r) => { box.checked = !!(r && r.cenzorSentence); });
+            chrome.storage.onChanged.addListener((ch, area) => { if (area === 'local' && ch.cenzorSentence) box.checked = !!ch.cenzorSentence.newValue; });
+        } catch (e) {}
+        box.addEventListener('change', () => saveSettings({ cenzorSentence: box.checked }));
+    })();
+
     // ===== [AGENT-EXP] 2026-11-14: czasy ciszy cenzora (same suwaki) =====
     (function () {
         const pairs = [
@@ -740,6 +767,16 @@ censorWords.addEventListener('change', () => {
             chrome.storage.onChanged.addListener((ch, area) => { if (area === 'local' && ch.lektorBar) box.checked = ch.lektorBar.newValue !== false; });
         } catch (e) {}
         box.addEventListener('change', () => saveSettings({ lektorBar: box.checked }));
+    })();
+    // [AGENT-EXP] 2026-11-26: panel „🎤 Lektor — co mówię” widoczny albo niewidoczny (lektor czyta dalej) — ta sama opcja co w Ustawieniach
+    (function () {
+        const box = $('lektorPanelCheck');
+        if (!box) return;
+        try {
+            chrome.storage.local.get('lektorPanelOn', (r) => { box.checked = !r || r.lektorPanelOn !== false; });
+            chrome.storage.onChanged.addListener((ch, area) => { if (area === 'local' && ch.lektorPanelOn) box.checked = ch.lektorPanelOn.newValue !== false; });
+        } catch (e) {}
+        box.addEventListener('change', () => saveSettings({ lektorPanelOn: box.checked }));
     })();
 
     // Sklep głosów: katalog 1100+ języków (MMS + Piper) z pobieraniem w aplikacji.
@@ -1768,10 +1805,23 @@ function langVoiceName(m, url, type) {
 // [AGENT-EXP] 2026-10-24: 🌐 Matcha-TTS-PL-Edge-v2 (liczony w przeglądarce, matcha_web/) — pobieranie z HuggingFace do
 // pamięci rozszerzenia (klucze 'matcha/<głos>/<plik>'); worker czyta stamtąd, gdy modelu nie ma w paczce.
 const MATCHA_REPO = 'https://huggingface.co/machinekind/Matcha-TTS-PL-Edge-v2/resolve/main/';
+const MATCHA_REPO_V1 = 'https://huggingface.co/machinekind/Matcha-TTS-PL-Edge/resolve/main/';   // [AGENT-EXP] 2026-11-25: głosy _3
+const MATCHA_REPO_PL = 'https://huggingface.co/machinekind/Matcha-TTS-PL/resolve/main/';   // [AGENT-EXP] 2026-11-25: głosy _1 (jeden plik)
+const matchaRepoName = (e) => e.full ? 'Matcha-TTS-PL' : e.det ? 'Matcha-TTS-PL-Edge' : 'Matcha-TTS-PL-Edge-v2';
 const MATCHA_FILES = ['voices.json', 'encoder_sdp_int8.onnx', 'decoder_t4_int8.onnx', 'vocoder.onnx'];   // [AGENT-EXP] 2026-10-24: INT8 osobno od F32 (~27 MB)
 const MATCHA_STORE = [
     { id: 'matcha-male_voxcpm_2', mv: 'male_voxcpm_2', voice: 'Matcha 🌐 męski — INT8 (male_voxcpm_2)' },   // [AGENT-EXP] 2026-10-24: + INT8 w nazwie
-    { id: 'matcha-female_voxcpm_2', mv: 'female_voxcpm_2', voice: 'Matcha 🌐 żeński — INT8 (female_voxcpm_2)' }
+    { id: 'matcha-female_voxcpm_2', mv: 'female_voxcpm_2', voice: 'Matcha 🌐 żeński — INT8 (female_voxcpm_2)' },
+    // [AGENT-EXP] 2026-11-25: głosy _3 (repo Matcha-TTS-PL-Edge, 2026-11-23) — zwykły koder (det), bez stochastycznego rytmu
+    { id: 'matcha-female_voxcpm_3', mv: 'female_voxcpm_3', voice: 'Matcha 🌐 żeński 3 — INT8 (female_voxcpm_3)', det: true, sizeMb: 28, url: MATCHA_REPO_V1 + 'female_voxcpm_3/' },
+    { id: 'matcha-male_voxcpm_3', mv: 'male_voxcpm_3', voice: 'Matcha 🌐 męski 3 — INT8 (male_voxcpm_3)', det: true, sizeMb: 28, url: MATCHA_REPO_V1 + 'male_voxcpm_3/' },
+    // [AGENT-EXP] 2026-11-25: głosy _1 (repo Matcha-TTS-PL, onnx/) — jeden plik matcha_pl_t4.onnx (koder + dekoder + duży wokoder
+    // HiFi-GAN V1), ~140 MB, liczony na procesorze; bez wariantów INT8/F32
+    { id: 'matcha-male_voxcpm_1', mv: 'male_voxcpm_1', voice: 'Matcha 🌐 męski 1 — jeden plik (male_voxcpm_1)', full: true, sizeMb: 140, url: MATCHA_REPO_PL + 'onnx/' },
+    { id: 'matcha-female_voxcpm_1', mv: 'female_voxcpm_1', voice: 'Matcha 🌐 żeński 1 — jeden plik (female_voxcpm_1)', full: true, sizeMb: 140, url: MATCHA_REPO_PL + 'onnx/female_voxcpm_1/' },
+    // [AGENT-EXP] 2026-11-25: _3 w pełnej wersji z Matcha-TTS-PL (jeden plik, ~88 MB) — osobna pamięć '<głos>_pelny', obok lekkiej Edge
+    { id: 'matcha-male_voxcpm_3_pelny', mv: 'male_voxcpm_3_pelny', voice: 'Matcha 🌐 męski 3 pełny — jeden plik (male_voxcpm_3, Matcha-TTS-PL)', full: true, sizeMb: 88, url: MATCHA_REPO_PL + 'onnx/male_voxcpm_3/' },
+    { id: 'matcha-female_voxcpm_3_pelny', mv: 'female_voxcpm_3_pelny', voice: 'Matcha 🌐 żeński 3 pełny — jeden plik (female_voxcpm_3, Matcha-TTS-PL)', full: true, sizeMb: 88, url: MATCHA_REPO_PL + 'onnx/female_voxcpm_3/' }
 ].map((e) => Object.assign({ type: 'matcha', dl: true, name: 'Polish', iso: 'pl', country: 'PL', region: 'Europe', sizeMb: 27, url: MATCHA_REPO + e.mv + '/' }, e));
 // [AGENT-EXP] 2026-10-24: w „Językach świata” dwie pozycje na głos: INT8 (wariant 'kombi') i F32 (wariant 'cpu_fp32',
 // wszystko na procesorze), ok. 85 MB. Pliki obok INT8 ('matcha/<głos>/encoder_sdp.onnx' itd.), znacznik '_ok32'.
@@ -1779,9 +1829,23 @@ const MATCHA_STORE = [
 // Pobranie wariantu od razu go włącza; przy dwóch dostępnych przełącza „Włącz” (lista w popupie usunięta 2026-11-02).
 const MATCHA_SHARED = ['voices.json', 'vocoder.onnx'];
 const MATCHA_F32_FILES = ['voices.json', 'vocoder.onnx', 'encoder_sdp.onnx', 'decoder_t4.onnx'];
-const MATCHA_F32_STORE = MATCHA_STORE.map((e) => Object.assign({}, e, { id: e.id + '-f32', f32: true, sizeMb: 89,
+const MATCHA_F32_STORE = MATCHA_STORE.filter((e) => !e.full).map((e) => Object.assign({}, e, { id: e.id + '-f32', f32: true, sizeMb: e.det ? 88 : 89,
     voice: e.voice.replace(' — INT8 (', ' — F32 (') }));
-const matchaFiles = (entry) => entry.f32 ? MATCHA_F32_FILES : MATCHA_FILES;
+// [AGENT-EXP] 2026-11-25: zwykły koder (det) — ten sam układ plików, encoder_int8.onnx / encoder.onnx zamiast encoder_sdp*
+const MATCHA_DET_FILES = ['voices.json', 'encoder_int8.onnx', 'decoder_t4_int8.onnx', 'vocoder.onnx'];
+const MATCHA_DET_F32_FILES = ['voices.json', 'vocoder.onnx', 'encoder.onnx', 'decoder_t4.onnx'];
+const MATCHA_FULL_FILES = ['voices.json', 'matcha_pl_t4.onnx'];   // [AGENT-EXP] 2026-11-25
+const matchaFiles = (entry) => entry.full ? MATCHA_FULL_FILES : entry.det ? (entry.f32 ? MATCHA_DET_F32_FILES : MATCHA_DET_FILES) : (entry.f32 ? MATCHA_F32_FILES : MATCHA_FILES);
+// [AGENT-EXP] 2026-11-25: głosy Matcha spoza katalogu, wczytane z folderu — zapamiętane w 'matchaImported' [{ mv, det }],
+// dopisywane do katalogu (🗑 / Włącz w „Języki świata”) i do listy głosów lektora.
+function matchaAddExtra(mv, det, full) {
+    if (!mv || MATCHA_STORE.some((e) => e.mv === mv)) return;
+    const e = { type: 'matcha', dl: true, name: 'Polish', iso: 'pl', country: 'PL', region: 'Europe', sizeMb: full ? 140 : 28, url: (det ? MATCHA_REPO_V1 : MATCHA_REPO) + mv + '/',
+        id: 'matcha-' + mv, mv, det: !!det, full: !!full, extra: true, voice: 'Matcha 🌐 ' + mv + (full ? ' — jeden plik (z folderu)' : ' — INT8 (z folderu)') };
+    MATCHA_STORE.push(e);
+    if (!full) MATCHA_F32_STORE.push(Object.assign({}, e, { id: e.id + '-f32', f32: true, sizeMb: 88, voice: e.voice.replace(' — INT8 (', ' — F32 (') }));
+}
+try { chrome.storage.local.get('matchaImported', (r) => { for (const x of (r && r.matchaImported) || []) matchaAddExtra(x.mv, x.det, x.full); }); } catch (e) {}
 const matchaOkKey = (entry) => 'matcha/' + entry.mv + '/' + (entry.f32 ? '_ok32' : '_ok');
 const matchaOtherOkKey = (entry) => 'matcha/' + entry.mv + '/' + (entry.f32 ? '_ok' : '_ok32');
 function matchaSetTryb(t) {
@@ -1826,8 +1890,8 @@ async function matchaDownload(entry) {
         langStatus('💾 Zapisuję „' + entry.voice + '” w pamięci rozszerzenia…');
         for (const [f, data] of got) await voicePut('matcha/' + entry.mv + '/' + f, data);
         await voicePut(matchaOkKey(entry), Date.now());
-        await matchaSetTryb(entry.f32 ? 'cpu_fp32' : 'kombi');   // [AGENT-EXP] 2026-10-24: pobrany wariant od razu w użyciu
-        langStatus('✓ „' + entry.voice + '” pobrany i włączony (' + (entry.f32 ? 'F32, wszystko na procesorze' : 'INT8') + '). Wybierz silnik Matcha i głos 🌐 w ustawieniach lektora.');
+        if (!entry.full) await matchaSetTryb(entry.f32 ? 'cpu_fp32' : 'kombi');   // [AGENT-EXP] 2026-10-24: pobrany wariant od razu w użyciu (2026-11-25: nie dla jednego pliku)
+        langStatus('✓ „' + entry.voice + '” pobrany i włączony (' + (entry.full ? 'jeden plik, na procesorze' : entry.f32 ? 'F32, wszystko na procesorze' : 'INT8') + '). Wybierz silnik Matcha i głos 🌐 w ustawieniach lektora.');
     } catch (e) {
         langStatus('⛔ Pobieranie nieudane: ' + ((e && e.message) || e));
     } finally {
@@ -1842,13 +1906,36 @@ async function matchaDownload(entry) {
 async function matchaImportFiles(files) {
     const byName = {};
     for (const f of Array.from(files || [])) byName[String(f.name || '').toLowerCase()] = f;
-    if (!Object.keys(byName).some((n) => /^(encoder_sdp|decoder_t4)/.test(n))) return null;
+    if (!Object.keys(byName).some((n) => /^(encoder_sdp|encoder|decoder_t4|matcha_pl_t[24])/.test(n) && /\.onnx$/.test(n))) return null;   // [AGENT-EXP] 2026-11-25: + zwykły koder
     if (!byName['voices.json']) return '⛔ Folder Matchy bez voices.json — nie wiem, który to głos.';
     let mv = '';
     try { mv = String(JSON.parse(await byName['voices.json'].text()).default || ''); } catch (e) {}
+    if (!mv) {   // [AGENT-EXP] 2026-11-25: bez „default” w voices.json — nazwa folderu
+        const rel = String(byName['voices.json'].webkitRelativePath || '').split('/');
+        mv = rel.length > 1 ? rel[rel.length - 2] : '';
+    }
+    if (byName['matcha_pl_t4.onnx'] && !byName['decoder_t4_int8.onnx'] && !byName['decoder_t4.onnx']) {   // [AGENT-EXP] 2026-11-25
+        const e0 = MATCHA_STORE.find((e) => e.mv === mv);
+        if (e0 && !e0.full && MATCHA_STORE.some((e) => e.mv === mv + '_pelny')) mv = mv + '_pelny';   // pełna wersja _3 obok lekkiej
+    }
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(mv)) return '⛔ Matcha: nie rozpoznaję nazwy głosu („' + (mv || '?') + '”). Wskaż folder głosu, np. female_voxcpm_3.';
+    // [AGENT-EXP] 2026-11-25: głos spoza katalogu — dopisz (rodzaj kodera po plikach), zapamiętaj na później
+    if (!MATCHA_STORE.some((e) => e.mv === mv)) {
+        const full = !!byName['matcha_pl_t4.onnx'] && !byName['decoder_t4_int8.onnx'] && !byName['decoder_t4.onnx'];   // [AGENT-EXP] 2026-11-25
+        const det = !full && !byName['encoder_sdp_int8.onnx'] && !byName['encoder_sdp.onnx'];
+        matchaAddExtra(mv, det, full);
+        await new Promise((res) => chrome.storage.local.get('matchaImported', (r) => {
+            const list = ((r && r.matchaImported) || []).filter((x) => x && x.mv !== mv).concat([{ mv, det, full }]);
+            chrome.storage.local.set({ matchaImported: list }, () => res());
+        }));
+    }
     const entries = MATCHA_STORE.concat(MATCHA_F32_STORE).filter((e) => e.mv === mv && matchaFiles(e).every((f) => byName[f]));
-    if (!entries.length) return '⛔ Matcha: znam tylko głosy ' + MATCHA_STORE.map((e) => e.mv).join(', ')
-        + ' z kompletem plików (voices.json, vocoder.onnx + encoder_sdp/decoder_t4 w wersji _int8 albo F32). W folderze: „' + (mv || '?') + '”.';
+    if (!entries.length) {
+        const e0 = MATCHA_STORE.find((e) => e.mv === mv);
+        if (e0 && e0.full) return '⛔ Matcha „' + mv + '”: brak kompletu plików. Potrzebne: voices.json i matcha_pl_t4.onnx.';   // [AGENT-EXP] 2026-11-25
+        return '⛔ Matcha „' + mv + '”: brak kompletu plików. Potrzebne: voices.json, vocoder.onnx, decoder_t4_int8.onnx (albo decoder_t4.onnx) i '
+            + (e0 && e0.det ? 'encoder_int8.onnx (albo encoder.onnx)' : 'encoder_sdp_int8.onnx (albo encoder_sdp.onnx)') + '.';
+    }
     for (const e of entries) for (const f of matchaFiles(e)) {
         const head = new Uint8Array(await byName[f].slice(0, 1).arrayBuffer());
         if (/\.onnx$/.test(f) && !(byName[f].size > 1024 * 1024 && head[0] === 0x08)) return '⛔ ' + f + ' nie wygląda na model ONNX.';
@@ -1857,15 +1944,22 @@ async function matchaImportFiles(files) {
         for (const f of matchaFiles(e)) await voicePut('matcha/' + e.mv + '/' + f, byName[f]);
         await voicePut(matchaOkKey(e), Date.now());
     }
-    await matchaSetTryb(entries.some((e) => !e.f32) ? 'kombi' : 'cpu_fp32');
+    if (!entries.some((e) => e.full)) await matchaSetTryb(entries.some((e) => !e.f32) ? 'kombi' : 'cpu_fp32');   // [AGENT-EXP] 2026-11-25: jeden plik — wariant bez zmian
     try { await matchaRefreshState(); langRender(); } catch (e) {}
-    return '✓ Matcha „' + mv + '” wczytana z folderu (' + entries.map((e) => e.f32 ? 'F32' : 'INT8').join(' + ')
+    return '✓ Matcha „' + mv + '” wczytana z folderu (' + entries.map((e) => e.full ? 'jeden plik' : e.f32 ? 'F32' : 'INT8').join(' + ')
         + '). Wybierz silnik Matcha i głos 🌐 w ustawieniach lektora.';
 }
 async function matchaDelete(entry) {
     let other = false;   // [AGENT-EXP] 2026-10-24: INT8 i F32 osobno; wspólne pliki zostają, gdy drugi wariant jest pobrany
     try { other = !!(await voiceGet(matchaOtherOkKey(entry))); } catch (err) {}
-    const files = matchaFiles(entry).concat(entry.f32 || other ? [] : ['encoder_sdp.onnx', 'decoder_t4.onnx']);   // + F32 ze starego pobierania „wszystko naraz”
+    if (entry.full) {   // [AGENT-EXP] 2026-11-25: jeden plik — skasuj wszystko głosu
+        for (const f of MATCHA_FULL_FILES.concat(['matcha_pl_t2.onnx'])) await voiceDel('matcha/' + entry.mv + '/' + f);
+        await voiceDel(matchaOkKey(entry));
+        await matchaRefreshState();
+        langRender();
+        return;
+    }
+    const files = matchaFiles(entry).concat(entry.f32 || other ? [] : entry.det ? ['encoder.onnx', 'decoder_t4.onnx'] : ['encoder_sdp.onnx', 'decoder_t4.onnx']);   // + F32 ze starego pobierania „wszystko naraz”
     for (const f of files) if (!(other && MATCHA_SHARED.includes(f))) await voiceDel('matcha/' + entry.mv + '/' + f);
     await voiceDel(matchaOkKey(entry));
     await matchaRefreshState();
@@ -2027,7 +2121,7 @@ function langRender() {
         }
         if (e.type === 'matcha') {   // [AGENT-EXP] 2026-10-24: Matcha 🌐 — osobna pamięć, nie lista „Własny głos”
             const st = (LANG_STORE.matcha || {})[e.f32 ? e.id : e.mv] || '';   // [AGENT-EXP] 2026-10-24: F32 ma własny stan
-            if (st) {   // [AGENT-EXP] 2026-10-24: wariant dostępnego pliku: w użyciu albo „Włącz”
+            if (st && !e.full) {   // [AGENT-EXP] 2026-10-24: wariant dostępnego pliku: w użyciu albo „Włącz” (2026-11-25: jeden plik — bez wariantu)
                 const on = (e.f32 ? 'cpu_fp32' : 'kombi') === LANG_STORE.matchaTryb;
                 const tb = document.createElement('button');
                 tb.className = 'mini' + (on ? ' ok' : '');
@@ -2047,7 +2141,8 @@ function langRender() {
             } else {
                 btn.textContent = LANG_STORE.busy[e.id] ? '⏳' : '⬇';
                 btn.disabled = !!LANG_STORE.busy[e.id];
-                btn.title = 'Pobierz z HuggingFace (machinekind/Matcha-TTS-PL-Edge-v2), ok. ' + e.sizeMb + ' MB'
+                btn.title = 'Pobierz z HuggingFace (machinekind/' + matchaRepoName(e) + '), ok. ' + e.sizeMb + ' MB'
+                    + (e.full ? ' — jeden plik, liczony na procesorze (wolniej niż głosy _2)' : '')
                     + (e.f32 ? ' — wariant F32, wszystko na procesorze (działa też bez INT8)' : '') + '; po pobraniu włącza się sam'   // [AGENT-EXP] 2026-10-24
                     + (e.f32 ? '' : '. Lektor pobierze go też sam przy pierwszym czytaniu');   // [AGENT-EXP] 2026-11-02
                 btn.addEventListener('click', () => matchaDownload(e));
@@ -2434,7 +2529,7 @@ try {
     // [AGENT-EXP] 2026-10-17: głosy Matcha = VOICES w serwer_matcha.py (★ = nowe, naturalne; „Stary” = poprzedni, robotyczny model).
     // [AGENT-EXP] 2026-10-24: ⚡ Matcha-TTS-PL-Edge-v2 (glosy_edge_v2 w serwerze) — te same głosy, ~3× szybciej na CPU.
     // [AGENT-EXP] 2026-10-24: 🌐 'web:…' = Matcha-TTS-PL-Edge-v2 w samym rozszerzeniu (matcha_web/), bez serwera.
-    const MATCHA = [["web:male_voxcpm_2:elegancki", "🌐 Elegancki męski — w przeglądarce"], ["web:female_voxcpm_2:elegancki", "🌐 Elegancka żeńska — w przeglądarce"], ["web:male_voxcpm_2", "🌐 Męski — naturalny, w przeglądarce"], ["web:female_voxcpm_2", "🌐 Żeński — naturalny, w przeglądarce"], ["edge:male_voxcpm_2:elegancki", "⚡ Elegancki męski 2 Edge (szybki)"], ["edge:female_voxcpm_2:elegancki", "⚡ Elegancka żeńska 2 Edge (szybka)"], ["edge:male_voxcpm_2", "⚡ Męski 2 Edge — naturalny (szybki)"], ["edge:female_voxcpm_2", "⚡ Żeński 2 Edge — naturalny (szybki)"], ["v2:male_voxcpm_1:elegancki", "★ Elegancki męski (spokojnie)"],["v2:male_voxcpm_2:elegancki", "★ Elegancki męski 2 (spokojnie)"], ["v2:female_voxcpm_2:elegancki", "★ Elegancka żeńska (spokojnie)"], ["v2:male_voxcpm_2", "★ Męski 2 — naturalny (żywy)"], ["v2:female_voxcpm_2", "★ Żeński 2 — naturalny (żywy)"], ["v2:male_voxcpm_1", "★ Męski 1 — naturalny (żywy)"], ["v2:female_voxcpm_1", "★ Żeński 1 — naturalny (żywy)"], ["synthetic", "Stary — Mieszanka 1"], ["synthetic2", "Stary — Mieszanka 2"], ["synthetic3", "Stary — Mieszanka 3"], ["synthetic4", "Stary — Mieszanka 4 (żeńska)"], ["synthetic5", "Stary — Mieszanka 5"], ["0", "Stary — Bartosz Bielenia (M)"], ["1", "Stary — Katarzyna Faszczewska (Ż)"], ["3", "Stary — Bartosz Głogowski (M)"], ["6", "Stary — Piotr Kopa (M)"], ["8", "Stary — Andrzej Seweryn (M)"], ["0.5*6+0.5*3", "Stary — Mieszanka własna (Kopa+Głogowski)"]];
+    const MATCHA = [["web:male_voxcpm_2:elegancki", "🌐 Elegancki męski — w przeglądarce"], ["web:female_voxcpm_2:elegancki", "🌐 Elegancka żeńska — w przeglądarce"], ["web:male_voxcpm_2", "🌐 Męski — naturalny, w przeglądarce"], ["web:female_voxcpm_2", "🌐 Żeński — naturalny, w przeglądarce"], ["web:female_voxcpm_3", "🌐 Żeński 3 — ciepły, w przeglądarce (nowy)"], ["web:male_voxcpm_3", "🌐 Męski 3 — niższy, w przeglądarce (nowy)"], ["web:female_voxcpm_3:elegancki", "🌐 Elegancka żeńska 3 — w przeglądarce (nowa)"], ["web:male_voxcpm_3:elegancki", "🌐 Elegancki męski 3 — w przeglądarce (nowy)"], ["web:male_voxcpm_3_pelny", "🌐 Męski 3 pełny — 88 MB, w przeglądarce"], ["web:female_voxcpm_3_pelny", "🌐 Żeński 3 pełny — 88 MB, w przeglądarce"], ["web:male_voxcpm_3_pelny:elegancki", "🌐 Elegancki męski 3 pełny — 88 MB"], ["web:female_voxcpm_3_pelny:elegancki", "🌐 Elegancka żeńska 3 pełna — 88 MB"], ["web:male_voxcpm_1", "🌐 Męski 1 — duży model, w przeglądarce (wolniejszy)"], ["web:female_voxcpm_1", "🌐 Żeński 1 — duży model, w przeglądarce (wolniejszy)"], ["web:male_voxcpm_1:elegancki", "🌐 Elegancki męski 1 — duży model (wolniejszy)"], ["web:female_voxcpm_1:elegancki", "🌐 Elegancka żeńska 1 — duży model (wolniejsza)"], ["edge:male_voxcpm_2:elegancki", "⚡ Elegancki męski 2 Edge (szybki)"], ["edge:female_voxcpm_2:elegancki", "⚡ Elegancka żeńska 2 Edge (szybka)"], ["edge:male_voxcpm_2", "⚡ Męski 2 Edge — naturalny (szybki)"], ["edge:female_voxcpm_2", "⚡ Żeński 2 Edge — naturalny (szybki)"], ["v2:male_voxcpm_1:elegancki", "★ Elegancki męski (spokojnie)"],["v2:male_voxcpm_2:elegancki", "★ Elegancki męski 2 (spokojnie)"], ["v2:female_voxcpm_2:elegancki", "★ Elegancka żeńska (spokojnie)"], ["v2:male_voxcpm_2", "★ Męski 2 — naturalny (żywy)"], ["v2:female_voxcpm_2", "★ Żeński 2 — naturalny (żywy)"], ["v2:male_voxcpm_1", "★ Męski 1 — naturalny (żywy)"], ["v2:female_voxcpm_1", "★ Żeński 1 — naturalny (żywy)"], ["synthetic", "Stary — Mieszanka 1"], ["synthetic2", "Stary — Mieszanka 2"], ["synthetic3", "Stary — Mieszanka 3"], ["synthetic4", "Stary — Mieszanka 4 (żeńska)"], ["synthetic5", "Stary — Mieszanka 5"], ["0", "Stary — Bartosz Bielenia (M)"], ["1", "Stary — Katarzyna Faszczewska (Ż)"], ["3", "Stary — Bartosz Głogowski (M)"], ["6", "Stary — Piotr Kopa (M)"], ["8", "Stary — Andrzej Seweryn (M)"], ["0.5*6+0.5*3", "Stary — Mieszanka własna (Kopa+Głogowski)"]];
     const CFG = {
         matcha: { k: 'matchaVoice', def: 'web:male_voxcpm_2:elegancki', label: 'Głos Matcha-TTS-PL', list: MATCHA },
         xtts: { k: 'tts2Voice', def: '', label: 'Próbka głosu (folder tts2\\probki glosu)', list: TTS2 },
@@ -2468,13 +2563,18 @@ try {
                 if (cur === c) render();
             });
         }
-        chrome.storage.local.get(c.k, (r) => {
+        chrome.storage.local.get([c.k, 'matchaImported'], (r) => {
             if (cur !== c) return;
             const v = r && typeof r[c.k] === 'string' ? r[c.k] : c.def;
             if (c.text) { txt.value = v || c.def; return; }
             sel.innerHTML = '';
-            c.list.forEach(([val, t]) => { const o = document.createElement('option'); o.value = val; o.textContent = t; sel.appendChild(o); });
-            if (!c.list.some(([val]) => val === v)) {   // głos spoza listy (np. dopisany ręcznie) — pokaż, nie gub
+            let items = c.list;
+            if (c === CFG.matcha) {   // [AGENT-EXP] 2026-11-25: + głosy Matcha wczytane z folderu (spoza listy)
+                const extra = ((r && r.matchaImported) || []).map((x) => x && x.mv).filter((mv) => mv && !items.some(([val]) => val === 'web:' + mv));
+                if (extra.length) items = items.slice(0, 1).concat(extra.map((mv) => ['web:' + mv, '🌐 ' + mv + ' — z folderu, w przeglądarce']), items.slice(1));
+            }
+            items.forEach(([val, t]) => { const o = document.createElement('option'); o.value = val; o.textContent = t; sel.appendChild(o); });
+            if (!items.some(([val]) => val === v)) {   // głos spoza listy (np. dopisany ręcznie) — pokaż, nie gub
                 const o = document.createElement('option'); o.value = v; o.textContent = v || '(pusty)'; sel.appendChild(o);
             }
             sel.value = v;
@@ -2484,7 +2584,7 @@ try {
     txt.addEventListener('change', () => { if (cur && cur.text) chrome.storage.local.set({ [cur.k]: cur.allowEmpty ? txt.value.trim() : (txt.value.trim() || cur.def) }); });   // [FIX 2026-11-02] allowEmpty
     eng.addEventListener('change', render);
     chrome.storage.onChanged.addListener((ch, area) => {
-        if (area === 'local' && (ch.ttsEngine || (cur && ch[cur.k]))) setTimeout(render, 0);
+        if (area === 'local' && (ch.ttsEngine || ch.matchaImported || (cur && ch[cur.k]))) setTimeout(render, 0);   // [AGENT-EXP] 2026-11-25: + matchaImported
     });
     chrome.storage.local.get('ttsEngine', () => setTimeout(render, 0));   // po ustawieniu eng.value przez blok wyżej
 })();
@@ -3007,6 +3107,21 @@ try {
             });
         } catch (e) { render(null); }
     }
+    // [AGENT-EXP] 2026-11-26: 🔄 Odśwież napisy — pamięć cenzora (Map w stronie) i napisy lektora z Netflix/HBO znikają
+    // z przeładowaniem karty; YouTube trzyma napisy filmu 90 dni (subs_cache, klucz yt|<v>) — ten wpis kasujemy.
+    const rb = $('statusRefresh');
+    if (rb) rb.addEventListener('click', () => {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            const tab = tabs && tabs[0];
+            if (!tab || tab.id == null) return;
+            lines.textContent = '⏳ Odświeżam napisy — strona się przeładuje…';
+            let v = '';
+            try { const u = new URL(tab.url || ''); if (/(^|\.)youtube\.com$/.test(u.hostname)) v = u.searchParams.get('v') || (u.pathname.match(/^\/(?:shorts|live)\/([\w-]+)/) || [])[1] || ''; } catch (e) {}
+            const reload = () => { try { chrome.tabs.reload(tab.id); } catch (e) {} };
+            if (!v) return reload();
+            chrome.runtime.sendMessage({ action: 'PAMIEC_VIDEO_DEL', key: 'yt|' + v }, () => { void chrome.runtime.lastError; reload(); });
+        });
+    });
     render(null);
     refresh();
     setInterval(refresh, 2000);

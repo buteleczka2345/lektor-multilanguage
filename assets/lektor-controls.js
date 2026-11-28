@@ -5,6 +5,7 @@
     window.__LEKTOR_CONTROLS_JS_RUNNING__ = true;
     try { if (/^\/embed\//.test(location.pathname)) return; } catch (e) {} // ramka Hover: pasek tylko na topie
     var controls = null, hiddenPill = null, visible = true, speed = 1, offset = 0;
+    var merged = false, ctrlRow = null, ctrlHide = null;   // [AGENT-EXP] 2026-11-26: jeden panel
     var barOn = true; // [AGENT-EXP] opcja „lektorControlsOn” z Ustawień: wył. = pasek ◄ ► i pigułka całkiem ukryte
     function updateSpeedDisplay() { var e = document.getElementById('lektor-speed-val'); if (e) e.textContent = speed.toFixed(1) + 'x'; }
     function updateOffsetDisplay() { var e = document.getElementById('lektor-offset-val'); if (e) { var s = offset >= 0 ? '+' : '−'; e.textContent = s + Math.abs(offset) + ' ms'; } }
@@ -291,7 +292,10 @@
         return b;
     }
     function setVisible(v) { visible = v; try { chrome.storage.local.set({ lektorControlsVisible: v }); } catch (e) {} applyVisibility(); }
-    function applyVisibility() { if (controls) controls.style.display = barOn && visible ? 'flex' : 'none'; if (hiddenPill) hiddenPill.style.display = barOn && !visible ? 'flex' : 'none'; } // [AGENT-EXP] barOn
+    function applyVisibility() {
+        // [AGENT-EXP] 2026-11-26: merged = rząd ◄ − 1.0x + ► wzięty do panelu „🎤 Lektor — co mówię” → własny pasek i pigułka znikają
+        if (merged) { if (controls) controls.style.display = 'none'; if (hiddenPill) hiddenPill.style.display = 'none'; if (ctrlRow) ctrlRow.style.display = barOn ? 'flex' : 'none'; return; }
+        if (controls) controls.style.display = barOn && visible ? 'flex' : 'none'; if (hiddenPill) hiddenPill.style.display = barOn && !visible ? 'flex' : 'none'; } // [AGENT-EXP] barOn
     function mkBtn(l, t, cb) { var b = document.createElement('button'); b.type = 'button'; b.textContent = l; b.title = t; b.style.cssText = 'background:rgba(255,255,255,0.12);color:#eee;border:1px solid rgba(255,255,255,0.2);border-radius:5px;padding:2px 8px;font:12px system-ui,sans-serif;cursor:pointer;'; b.addEventListener('click', cb); return b; }
     function ensureControls() {
         if (controls && controls.isConnected) return controls;
@@ -322,6 +326,7 @@
         row.appendChild(mkSeekBtn('►', 'Przewiń wideo o 5 s (przytrzymaj = przewijaj)', 5));
         var hb = mkBtn('─', 'Schowaj', function () { setVisible(false); }); hb.style.marginLeft = 'auto'; row.appendChild(hb);
         controls.appendChild(row);
+        ctrlRow = row; ctrlHide = hb;   // [AGENT-EXP] 2026-11-26
         root.appendChild(controls);
         hiddenPill = document.createElement('button'); hiddenPill.textContent = '🎤'; hiddenPill.type = 'button'; hiddenPill.title = 'Pokaż pasek'; hiddenPill.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:2147483647;display:none;align-items:center;background:rgba(14,14,18,0.96);color:#eee;border:1px solid rgba(255,255,255,0.2);border-radius:999px;padding:5px 12px;font:11px system-ui,sans-serif;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.4);';
         hiddenPill.addEventListener('click', function () { setVisible(true); });
@@ -332,6 +337,17 @@
         return controls;
     }
     if (document.body) ensureControls(); else document.addEventListener('DOMContentLoaded', ensureControls);
+    // [AGENT-EXP] 2026-11-26: panel (sub_panel.js / dom_content.js) zabiera rząd prędkości i przewijania do siebie — jeden panel zamiast dwóch.
+    // Przesunięcie lektora ma już panel (−1 s … +1 s), więc reszta paska zostaje ukryta.
+    window.__LektorControlsRow = function () {
+        if (!ctrlRow) ensureControls();
+        if (!ctrlRow) return null;
+        merged = true;
+        if (ctrlHide) ctrlHide.remove();
+        ctrlRow.style.cssText = 'display:flex;align-items:center;gap:4px;padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.12);';
+        applyVisibility();
+        return ctrlRow;
+    };
     // Wykrycie API odtwarzacza Netflixa (diagnostyka + ustawienie nfReady).
     if (IS_NETFLIX) { pingNetflix(); setTimeout(pingNetflix, 3000); }
 })();

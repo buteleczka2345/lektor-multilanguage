@@ -1,9 +1,8 @@
 {
-    "update_url": "https://clients2.google.com/service/update2/crx",
     "manifest_version": 3,
     "name": "__MSG_extName__",
     "default_locale": "pl",
-    "version": "3.7.1",
+    "version": "3.7.3",
     "description": "__MSG_extDesc__",
     "permissions": [
         "activeTab",
@@ -52,6 +51,7 @@
         },
         {
             "js": [
+                "src/content/inject.js",
                 "src/content/netflix_seek_bridge.js"
             ],
             "matches": [
@@ -160,6 +160,7 @@
                 "assets/i18n_en.js",
                 "assets/i18n.js",
                 "assets/lektor_bar.js",
+                "assets/sub_panel.js",
                 "assets/lektor_scheduler.js",
                 "assets/content.js-BgeP3Ise.js"
             ],

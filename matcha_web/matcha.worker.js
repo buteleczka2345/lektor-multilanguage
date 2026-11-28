@@ -36,6 +36,10 @@ let gpuBroken = !(self.navigator && navigator.gpu);
 let tryb = 'kombi';   // z wiadomości (msg.tryb); zmianę wariantu obsługuje engine.js (nowe workery)
 const CPU_FILES = ['encoder_sdp_int8.onnx', 'decoder_t4_int8.onnx', 'vocoder.onnx'];
 const FP32_FILES = ['encoder_sdp.onnx', 'decoder_t4.onnx', 'vocoder.onnx'];
+// [AGENT-EXP] 2026-11-25: głosy bez stochastycznego rytmu (np. female_voxcpm_3 / male_voxcpm_3 z Matcha-TTS-PL-Edge) mają
+// zwykły koder: encoder_int8.onnx / encoder.onnx. Najpierw sdp (jak dotąd — głosy _2 bez zmian), potem zwykły.
+const FULL_FILES = ['matcha_pl_t4.onnx', 'matcha_pl_t2.onnx'];   // [AGENT-EXP] 2026-11-25: model z jednego pliku
+const ENC_ALT = { 'encoder_sdp_int8.onnx': 'encoder_int8.onnx', 'encoder_sdp.onnx': 'encoder.onnx' };
 // [AGENT-EXP] 2026-10-24: karta wolniejsza niż procesor → procesor. Chrome hamuje WebGPU w ukrytych stronach (a dokument
 // lektora jest zawsze ukryty): w teście każde zdanie trwało wtedy stałe ~2,8 s, procesor liczy ~0,35 s na 1 s mowy.
 // „Wolno” = dłużej niż procesor: 0,4 s na sekundę mowy + 0,1 s. Sprawdzane próbą po wczytaniu i potem przy każdej kwestii
@@ -46,7 +50,7 @@ const gpuSlow = (ms, samples) => ms > (0.4 * samples / SR) * 1000 + 100;
 
 async function releaseVoice() {
     if (!S) return;
-    for (const k of ['enc', 'dec', 'voc']) try { await S[k].release(); } catch (e) {}
+    for (const k of ['enc', 'dec', 'voc', 'full']) try { if (S[k]) await S[k].release(); } catch (e) {}
     S = null; SKey = '';
 }
 
@@ -69,7 +73,8 @@ function idbGet(key) {
     });
 }
 async function modelBytes(voice, f) {
-    const v = await idbGet('matcha/' + voice + '/' + f);
+    let v = await idbGet('matcha/' + voice + '/' + f);
+    if (!v && ENC_ALT[f]) v = await idbGet('matcha/' + voice + '/' + ENC_ALT[f]);   // [AGENT-EXP] 2026-11-25: zwykły koder
     if (!v) throw new Error('brak modelu ' + voice + '/' + f + ' — pobierz głos Matcha w popupie („Języki świata”)');
     return v instanceof Blob ? new Uint8Array(await v.arrayBuffer()) : new Uint8Array(v.buffer ? v.buffer.slice(0) : v);
 }
@@ -77,9 +82,21 @@ async function modelBytes(voice, f) {
 async function loadVoice(voice) {
     const key = voice + '|' + tryb + '|' + (gpuBroken || tryb !== 'kombi' ? 'cpu' : 'gpu');   // [AGENT-EXP] 2026-10-24: cpu_fp32 = zawsze 'cpu' (inaczej wczytywał modele przy każdej kwestii)
     if (S && SKey === key) return S;
+    if (S && SKey === voice + '|full') return S;   // [AGENT-EXP] 2026-11-25: model z jednego pliku — wariant bez znaczenia
     await releaseVoice();
     const bytes = (f) => modelBytes(voice, f);   // [AGENT-EXP] 2026-10-24: pamięć rozszerzenia (pobrany z internetu)
     const vj = JSON.parse(new TextDecoder().decode(await bytes('voices.json')));
+    // [AGENT-EXP] 2026-11-25: model z jednego pliku (Matcha-TTS-PL: matcha_pl_t4.onnx = koder + dekoder + wokoder w jednym
+    // grafie, np. male_voxcpm_1 / female_voxcpm_1) — jedna sesja na procesorze, bez podziału na kartę.
+    let fullB = null;
+    for (const f of FULL_FILES) { try { fullB = await bytes(f); break; } catch (e) {} }
+    if (fullB) {
+        const optF = { executionProviders: ['wasm'], graphOptimizationLevel: 'all', logSeverityLevel: 3 };
+        S = { vj, gdzie: 'procesor (jeden plik)', karta: false, full: await InferenceSession.create(fullB, optF) };
+        fullB = null;
+        SKey = voice + '|full';
+        return S;
+    }
     if (!gpuBroken && tryb === 'kombi') {
         try {
             const opt = { executionProviders: [{ name: 'webgpu', preferredLayout: 'NCHW' }], graphOptimizationLevel: 'all', logSeverityLevel: 3 };
@@ -155,30 +172,73 @@ function speakerEmb(vj, style) {
     return new Tensor('float32', spk, [1, spk.length]);
 }
 
+// [AGENT-EXP] 2026-11-25: filtr górnoprzepustowy zerowej fazy (Butterworth 2. rzędu, w przód i wstecz) — female_voxcpm_1
+// ma w voices.json highpass_hz 90 (usuwa nauczone „pyknięcia” na „p”; tak robi Space autora).
+function highpass(x, hz) {
+    if (!(hz > 0) || x.length < 8) return x;
+    const w0 = 2 * Math.PI * hz / SR, c = Math.cos(w0), al = Math.sin(w0) / Math.SQRT2, a0 = 1 + al;
+    const b0 = (1 + c) / 2 / a0, b1 = -(1 + c) / a0, b2 = b0, a1 = -2 * c / a0, a2 = (1 - al) / a0;
+    const pass = (s) => {
+        const y = new Float32Array(s.length);
+        let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+        for (let i = 0; i < s.length; i++) {
+            const v = b0 * s[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+            x2 = x1; x1 = s[i]; y2 = y1; y1 = v; y[i] = v;
+        }
+        return y;
+    };
+    return pass(pass(x).reverse()).reverse();
+}
+async function sentenceFull(S, seq, spk, temperature, tempo) {   // [AGENT-EXP] 2026-11-25: jak przykład z README Matcha-TTS-PL
+    const o = await S.full.run({
+        x: new Tensor('int64', BigInt64Array.from(seq.map(BigInt)), [1, seq.length]),
+        x_lengths: new Tensor('int64', BigInt64Array.from([BigInt(seq.length)]), [1]),
+        scales: new Tensor('float32', Float32Array.from([temperature, tempo]), [2]),
+        spk_emb: spk,
+    });
+    const on = S.full.outputNames || [];
+    const wav = o.wav || o[on[0]], wl = o.wav_lengths || o[on[1]];
+    const n = wl ? Math.min(Number(wl.data[0]), wav.data.length) : wav.data.length;
+    let out = Float32Array.from(wav.data.subarray(0, n));
+    out = highpass(out, Number(S.vj.defaults && S.vj.defaults.highpass_hz) || 0);
+    for (let i = 0; i < out.length; i++) out[i] = Math.max(-1, Math.min(1, out[i]));
+    return out;
+}
+
 async function sentence(S, text, spk, temperature, tempo) {
     const ipa = await textToIpa(markEnglish(text));
     const { seq } = ipaToIds(ipa);
     if (seq.length < 3) return new Float32Array(0);
+    if (S.full) return sentenceFull(S, seq, spk, temperature, tempo);
     const sdp = S.vj.durations && S.vj.durations.sdp;
-    const eo = await S.enc.run({
+    // [AGENT-EXP] 2026-11-25: koder ze stochastycznym rytmem (wejście z_dur) dostaje to co dotąd; zwykły koder (głosy _3)
+    // — tylko scales [temperatura, tempo] i bez z_dur (jak tts.py z Matcha-TTS-PL-Edge).
+    const stoch = !S.enc.inputNames || S.enc.inputNames.includes('z_dur');
+    const feeds = {
         x: new Tensor('int64', BigInt64Array.from(seq.map(BigInt)), [1, seq.length]),
         x_lengths: new Tensor('int64', BigInt64Array.from([BigInt(seq.length)]), [1]),
-        scales: new Tensor('float32', Float32Array.from([temperature, tempo, sdp ? sdp.dur_temperature : 0.667]), [3]),
-        z_dur: new Tensor('float32', gauss(seq.length), [1, 1, seq.length]),
+        scales: stoch ? new Tensor('float32', Float32Array.from([temperature, tempo, sdp ? sdp.dur_temperature : 0.667]), [3])
+            : new Tensor('float32', Float32Array.from([temperature, tempo]), [2]),
         spk_emb: spk,
-    });
-    const T = Number(eo.mel_lengths.data[0]), Tf = eo.mu.dims[2];
+    };
+    if (stoch) feeds.z_dur = new Tensor('float32', gauss(seq.length), [1, 1, seq.length]);
+    const eo = await S.enc.run(feeds);
+    const eon = S.enc.outputNames || [];
+    const mu = eo.mu || eo[eon[0]], melLen = eo.mel_lengths || eo[eon[1]];   // [AGENT-EXP] 2026-11-25: nazwy wyjść mogą być inne
+    const T = Number(melLen.data[0]), Tf = mu.dims[2];
     if (!T) return new Float32Array(0);
     const L = Math.ceil(T / 4) * 4;   // dekoder: długość wielokrotnością 4, nadmiar zamaskowany
     const mask = new Float32Array(L); mask.fill(1, 0, T);
     const d = await S.dec.run({
-        mu: new Tensor('float32', sliceT(eo.mu.data, Tf, 0, T, L), [1, 80, L]),
+        mu: new Tensor('float32', sliceT(mu.data, Tf, 0, T, L), [1, 80, L]),
         mask: new Tensor('float32', mask, [1, 1, L]),
         z: new Tensor('float32', sliceT(gauss(80 * T), T, 0, T, L), [1, 80, L]),
         spk_emb: spk,
         temperature: new Tensor('float32', Float32Array.from([temperature]), []),
     });
-    const w = await S.voc.run({ mel: new Tensor('float32', sliceT(d.mel.data, L, 0, T, T), [1, 80, T]) });
+    const mel = d.mel || d[(S.dec.outputNames || [])[0]];
+    const w0 = await S.voc.run({ mel: new Tensor('float32', sliceT(mel.data, L, 0, T, T), [1, 80, T]) });
+    const w = { wav: w0.wav || w0[(S.voc.outputNames || [])[0]] };
     return Float32Array.from(w.wav.data.subarray(0, T * HOP), (x) => Math.max(-1, Math.min(1, x)));
 }
 

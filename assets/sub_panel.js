@@ -140,6 +140,51 @@
         applyVisibility();
     }
 
+    // [AGENT-EXP] 2026-11-26: panel przesuwany — chwyć za nagłówek i przeciągnij; miejsce zapamiętane (lektorPanelPos, wspólne dla stron).
+    // Pigułka (panel zwinięty) stoi w tym samym miejscu i też się przeciąga; klik bez przesunięcia = rozwiń.
+    function makeDraggable(pairs) {   // pairs: [[element, uchwyt], ...] — wszystkie elementy dostają tę samą pozycję
+        var d = null, moved = false;
+        // zakotwiczenie od DOŁU (left + bottom): panel rozwija się z pigułki do góry
+        function place(x, b) {
+            x = Math.max(0, Math.min(window.innerWidth - 60, x));
+            b = Math.max(0, Math.min(window.innerHeight - 30, b));
+            pairs.forEach(function (p) { p[0].style.left = x + 'px'; p[0].style.bottom = b + 'px'; p[0].style.top = 'auto'; });
+        }
+        pairs.forEach(function (p) {
+            var el = p[0], h = p[1];
+            h.style.cursor = 'move';
+            h.addEventListener('mousedown', function (e) {
+                var c = e.target.closest && e.target.closest('button,input');
+                if (e.button !== 0 || (c && c !== h)) return;
+                d = { x0: e.clientX, y0: e.clientY, left: el.offsetLeft, bottom: window.innerHeight - el.offsetTop - el.offsetHeight };   // offset* = bez skali uiScale
+                moved = false;
+                e.preventDefault(); e.stopPropagation();
+            });
+            // po przeciągnięciu pigułki nie rozwijamy panelu
+            el.addEventListener('click', function (e) { if (moved) { moved = false; e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+        });
+        window.addEventListener('mousemove', function (e) {
+            if (!d) return;
+            if (!moved && Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) < 4) return;
+            moved = true;
+            place(d.left + e.clientX - d.x0, d.bottom - (e.clientY - d.y0));
+        }, true);
+        window.addEventListener('mouseup', function () {
+            if (!d) return;
+            d = null;
+            if (!moved) return;
+            setTimeout(function () { moved = false; }, 0);   // „click” zaraz po puszczeniu jest połknięty, następne kliknięcia działają
+            var s = pairs[0][0].style;
+            try { chrome.storage.local.set({ lektorPanelPos: { x: parseInt(s.left, 10), b: parseInt(s.bottom, 10) } }); } catch (e) {}
+        }, true);
+        try {
+            chrome.storage.local.get(['lektorPanelPos'], function (r) {
+                var p = r && r.lektorPanelPos;
+                if (p && isFinite(p.x) && isFinite(p.b)) place(p.x, p.b);   // stary zapis {x,y} (od góry) pomijamy
+            });
+        } catch (e) {}
+    }
+
     function createPanel() {
         if (box) return;
         var root = document.body || document.documentElement;
@@ -169,6 +214,45 @@
         filterRow.appendChild(input);
         filterRow.appendChild(mkBtn('＋ Blokuj', 'Dodaj frazę do blokad', function () { addUserPhrase(input.value); input.value = ''; }));
         box.appendChild(filterRow);
+        // [AGENT-EXP] 2026-11-26: przesunięcie napisów (lektor + cenzor) z panelu — ten sam klucz subtitleOffsetMs co suwak
+        // w popupie i panel ⚙; 👁 włącza podgląd cenzora na filmie, żeby od razu widzieć efekt.
+        var offRow = document.createElement('div');
+        offRow.style.cssText = 'display:flex;gap:4px;align-items:center;padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.12);';
+        var offVal = document.createElement('span');
+        offVal.style.cssText = 'flex:1;text-align:center;font-weight:700;color:#7ee0ff;';
+        var offMs = 0;
+        function showOff() {
+            offVal.textContent = '🕒 ' + (offMs >= 0 ? '+' : '−') + (Math.abs(offMs) / 1000).toFixed(1).replace('.', ',') + ' s';
+        }
+        function setOff(ms) {
+            offMs = Math.max(-10000, Math.min(10000, Math.round(ms)));   // jak suwak w popupie (±10 s)
+            showOff();
+            try { chrome.storage.local.set({ subtitleOffsetMs: offMs }); } catch (e) {}
+        }
+        offRow.appendChild(mkBtn('−1 s', 'Napisy 1 s wcześniej', function () { setOff(offMs - 1000); }));
+        offRow.appendChild(mkBtn('−0,1', 'Napisy 0,1 s wcześniej', function () { setOff(offMs - 100); }));
+        offRow.appendChild(offVal);
+        offRow.appendChild(mkBtn('+0,1', 'Napisy 0,1 s później', function () { setOff(offMs + 100); }));
+        offRow.appendChild(mkBtn('+1 s', 'Napisy 1 s później', function () { setOff(offMs + 1000); }));
+        offRow.appendChild(mkBtn('0', 'Wyzeruj przesunięcie', function () { setOff(0); }));
+        var pvBtn = mkBtn('👁', 'Podgląd napisów na filmie (sprawdź przesunięcie)', function () {
+            try { chrome.storage.local.set({ cenzorPreview: pvBtn.dataset.on !== '1' }); } catch (e) {}
+        });
+        function showPv(on) { pvBtn.dataset.on = on ? '1' : ''; pvBtn.style.background = on ? 'rgba(255,212,0,0.45)' : 'rgba(255,255,255,0.12)'; }
+        offRow.appendChild(pvBtn);
+        box.appendChild(offRow);
+        try { var lcRow = window.__LektorControlsRow && window.__LektorControlsRow(); if (lcRow) box.appendChild(lcRow); } catch (e) {}   // [AGENT-EXP] 2026-11-26: ◄ − 1.0x + ► z lektor-controls.js — jeden panel
+        showOff();
+        try {
+            chrome.storage.local.get(['subtitleOffsetMs', 'cenzorPreview'], function (r) {
+                offMs = Number(r && r.subtitleOffsetMs) || 0; showOff(); showPv(!!(r && r.cenzorPreview));
+            });
+            chrome.storage.onChanged.addListener(function (ch, area) {
+                if (area !== 'local') return;
+                if (ch.subtitleOffsetMs) { offMs = Number(ch.subtitleOffsetMs.newValue) || 0; showOff(); }
+                if (ch.cenzorPreview) showPv(!!ch.cenzorPreview.newValue);
+            });
+        } catch (e) {}
         blockedBox = document.createElement('div');
         blockedBox.style.cssText = 'padding:3px 8px;border-bottom:1px solid rgba(255,255,255,0.12);max-height:54px;overflow-y:auto;';
         box.appendChild(blockedBox);
@@ -182,9 +266,10 @@
         pill.setAttribute('data-lektor-ui', ''); // [AGENT-EXP]
         pill.textContent = '🎤 Lektor';
         pill.title = 'Pokaż podgląd lektora';
-        pill.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:2147483647;display:none;align-items:center;gap:5px;background:rgba(18,18,22,0.94);color:#eee;border:1px solid rgba(255,255,255,0.25);border-radius:999px;padding:4px 10px;font:10px system-ui,sans-serif;cursor:pointer;';
+        pill.style.cssText = 'position:fixed;left:10px;bottom:130px;z-index:2147483647;display:none;align-items:center;gap:5px;background:rgba(18,18,22,0.94);color:#eee;border:1px solid rgba(255,255,255,0.25);border-radius:999px;padding:4px 10px;font:10px system-ui,sans-serif;cursor:pointer;';   // [AGENT-EXP] 2026-11-26: pigułka nad paskiem odtwarzacza — nie zasłania strzałki cofania
         pill.addEventListener('click', function () { setPanelVisible(true); });
         root.appendChild(pill);
+        makeDraggable([[box, head], [pill, pill]]);   // [AGENT-EXP] 2026-11-26
         try { if (self.MLi18n) { MLi18n.watch(box); MLi18n.watch(pill); } } catch (e) {}   // [AGENT-EXP] 2026-10-21: język interfejsu (PL / EN)
         renderChips();
         applyVisibility();

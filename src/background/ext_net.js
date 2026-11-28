@@ -332,7 +332,8 @@ function aiHash(s) {
 }
 async function aiMemGet(src) {
     try {
-        const r = await chrome.storage.local.get([AI_MEM_KEY]);
+        const r = await chrome.storage.local.get([AI_MEM_KEY, 'pamiecTlumaczenOn']);
+        if (r.pamiecTlumaczenOn === false) return '';   // [AGENT-EXP] 2026-11-26: przełącznik 💾 Pamięć tłumaczeń
         const mem = (r && r[AI_MEM_KEY]) || {};
         const e = mem[aiHash(src)];
         return e && e.pl ? String(e.pl) : '';
@@ -341,7 +342,8 @@ async function aiMemGet(src) {
 async function aiMemSave(src, pl, engine) {
     if (!src || !pl) return;
     try {
-        const r = await chrome.storage.local.get([AI_MEM_KEY]);
+        const r = await chrome.storage.local.get([AI_MEM_KEY, 'pamiecTlumaczenOn']);
+        if (r.pamiecTlumaczenOn === false) return;   // [AGENT-EXP] 2026-11-26: przełącznik 💾 Pamięć tłumaczeń
         const mem = (r && r[AI_MEM_KEY] && typeof r[AI_MEM_KEY] === 'object') ? r[AI_MEM_KEY] : {};
         mem[aiHash(src)] = { src: String(src).slice(0, 2000), pl: String(pl).slice(0, 2000), engine: engine || 'chrome-ai', ts: Date.now() };
         const keys = Object.keys(mem);

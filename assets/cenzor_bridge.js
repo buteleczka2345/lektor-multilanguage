@@ -11,7 +11,7 @@
         'cenzorTimingMode', 'cenzorPrerollMs', 'cenzorPostrollMs',
         'cenzorAsrTag', 'censorCustomWords', 'cenzorNfPl', 'cenzorYtPl', 'customSources', 'customSourcesOn', 'primeSubtitleSource',   // [FIX 2026-11-02] jedna lista słów (wspólna z lektorem)   // [AGENT-EXP] 2026-11-14: źródło napisów (Immersive / wbudowane)
         'censorEnabled', 'censorMode',
-        'subtitleOffsetMs', 'cenzorTailFix', 'cenzorPreview'];   // [FIX 2026-11-21] wspólne przesunięcie napisów (lektor + cenzor) i „napis wisi dłużej niż mowa”   // [AGENT-EXP] 2026-11-17: tryb cenzury (m.in. „kreski ----------” widoczne w napisach na ekranie)
+        'subtitleOffsetMs', 'cenzorTailFix', 'cenzorPreview', 'cenzorSentence'];   // [AGENT-EXP] 2026-11-28: cisza na całe zdanie   // [FIX 2026-11-21] wspólne przesunięcie napisów (lektor + cenzor) i „napis wisi dłużej niż mowa”   // [AGENT-EXP] 2026-11-17: tryb cenzury (m.in. „kreski ----------” widoczne w napisach na ekranie)
     var last = {};
 
     // [AGENT-EXP] 2026-11-16: DOMYŚLNE ustawienia cenzora = stan z popupu (wszystko WŁ., tryb „usuń słowo”,
@@ -39,6 +39,7 @@
         censorMode: 'remove',
         subtitleOffsetMs: 0,   // [FIX 2026-11-21] ten sam suwak co „Przesunięcie napisów” lektora (popup i panel ⚙)
         cenzorPreview: false,  // [FIX 2026-11-21] podgląd napisów z pliku na ekranie (sprawdzanie przesunięcia)
+        cenzorSentence: false, // [AGENT-EXP] 2026-11-28: cisza na całe zdanie z przekleństwem
         cenzorTailFix: true    // [FIX 2026-11-21] cisza obejmuje oba możliwe położenia słowa, gdy kwestia jest za długa na tekst
     };
     // Brak wpisu → wartość domyślna (customSources/customSourcesOn zostają undefined = brak własnych selektorów).
@@ -78,6 +79,23 @@
     window.addEventListener('message', function (ev) {
         if (ev.source !== window || ev.origin !== location.origin) return;
         if (ev.data && ev.data.__lektorCenzor === 'hello') send();
+        // [AGENT-EXP] 2026-11-26: podgląd cenzora zsynchronizował przesunięcie (klik w przekleństwo / klawisz S)
+        // → zapis wspólnego suwaka; popup, panel ⚙ i lektor dostaną zmianę przez storage.onChanged.
+        if (ev.data && ev.data.__lektorCenzor === 'setOffset') {
+            var ms = Number(ev.data.ms);
+            if (isFinite(ms)) { try { chrome.storage.local.set({ subtitleOffsetMs: Math.max(-10000, Math.min(10000, Math.round(ms))) }); } catch (e) {} }
+        }
+        // [DIAG 2026-11-26] dziennik wyciszeń → popup (🤬 Cenzor → Diagnostyka). Ostatnie 50 wpisów.
+        if (ev.data && ev.data.__lektorCenzor === 'diag' && ev.data.entry) {
+            var en = ev.data.entry; en.ts = Date.now();
+            try {
+                chrome.storage.local.get('cenzorDiagLog', function (r) {
+                    var log = Array.isArray(r && r.cenzorDiagLog) ? r.cenzorDiagLog : [];
+                    log.push(en);
+                    chrome.storage.local.set({ cenzorDiagLog: log.slice(-50) });
+                });
+            } catch (e) {}
+        }
         // [AGENT-EXP] 2026-10-25: cały plik napisów (HBO z manifestu, inne strony ze ścieżki odtwarzacza) → lektor
         // (jak Łowca, ale full: pierwszeństwo; przy okazji zapamiętuje stronę — następny film rusza sam).
         var k = ev.data && ev.data.__lektorCenzor;

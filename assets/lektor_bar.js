@@ -16,6 +16,11 @@
     'use strict';
     if (window.__lektorBarLoaded) return;
     window.__lektorBarLoaded = true;
+    // [FIX 2026-11-25] po przeładowaniu / aktualizacji rozszerzenia stary skrypt zostaje na karcie „osierocony”:
+    // dalej rysuje pasek, ale nie słyszy już checkboxa. Nowa kopia usuwa jego pasek, a każda kopia sama się wyłącza,
+    // gdy straci łączność z rozszerzeniem (alive() = false).
+    function alive() { try { return !!(chrome.runtime && chrome.runtime.id); } catch (e) { return false; } }
+    try { document.querySelectorAll('#lektor-progress-bar').forEach(function (el) { el.remove(); }); } catch (e) {}
     window.__lektorBarProviders = window.__lektorBarProviders || {};
 
     var on = null, box = null,   // [FIX 2026-11-22] null = ustawienie jeszcze się wczytuje (bez mignięcia)
@@ -30,9 +35,20 @@
             lastSig = '';
         });
         setTimeout(function () { if (on === null) on = true; }, 3000);   // storage milczy → domyślnie WŁ.
+        // [FIX 2026-11-25] zapasowo co 2 s czytamy checkbox sami — gdyby zdarzenie onChanged nie dotarło
+        setInterval(function () {
+            if (!alive()) return;
+            try {
+                chrome.storage.local.get('lektorBar', function (r) {
+                    if (chrome.runtime.lastError) return;
+                    var nx = !(r && r.lektorBar === false);
+                    if (nx !== on) { on = nx; lastSig = ''; if (!on) hide(); }
+                });
+            } catch (e) {}
+        }, 2000);
         chrome.storage.onChanged.addListener(function (ch, area) {
             if (area !== 'local') return;
-            if (ch.lektorBar) { on = ch.lektorBar.newValue !== false; lastSig = ''; }
+            if (ch.lektorBar) { on = ch.lektorBar.newValue !== false; lastSig = ''; if (!on) hide(); }
             if (ch.lookaheadMin) { limitMs = Math.max(0, (Number(ch.lookaheadMin.newValue) || 0) * 60000); lastSig = ''; }
         });
     } catch (e) {}
@@ -284,7 +300,34 @@
     }
     window.__lektorBarSnap = snap;   // diagnostyka: `__lektorBarSnap()` w konsoli strony
 
+    // [FIX 2026-11-25] WIDOCZNA część filmu. Netflix (okno szersze niż 16:9) robi <video> wyższy niż okno i ucina go
+    // rodzicem z overflow:hidden — dół elementu był POD ekranem, więc pasek rysował się poza widokiem („nie ma paska”).
+    // Przycinamy prostokąt do okna i do przodków, które obcinają zawartość.
+    function visibleRect(v) {
+        var b = v.getBoundingClientRect();
+        var L = b.left, T = b.top, R = b.right, B = b.bottom;
+        try {
+            for (var el = v.parentElement; el && el !== document.documentElement; el = el.parentElement) {
+                var cs = getComputedStyle(el);
+                if (cs.overflowX === 'visible' && cs.overflowY === 'visible' && cs.clipPath === 'none') continue;
+                var p = el.getBoundingClientRect();
+                if (p.width < 2 || p.height < 2) continue;
+                L = Math.max(L, p.left); T = Math.max(T, p.top); R = Math.min(R, p.right); B = Math.min(B, p.bottom);
+            }
+        } catch (e) {}
+        L = Math.max(L, 0); T = Math.max(T, 0);
+        R = Math.min(R, window.innerWidth || document.documentElement.clientWidth);
+        B = Math.min(B, window.innerHeight || document.documentElement.clientHeight);
+        return { left: L, top: T, right: R, bottom: B, width: Math.max(0, R - L), height: Math.max(0, B - T) };
+    }
+
     function tick() {
+        if (!alive()) {   // [FIX 2026-11-25] osierocony skrypt — sprzątamy pasek i kończymy na dobre
+            try { if (box) box.remove(); } catch (e) {}
+            box = null; why = 'rozszerzenie przeładowane — odśwież stronę';
+            clearInterval(tickTimer);
+            return;
+        }
         if (on === null) { why = 'ustawienia jeszcze się wczytują'; return; }
         if (!on) { why = 'wyłączone w ustawieniach (📊 Pasek lektora)'; hide(); return; }
         if (document.visibilityState !== 'visible') { why = 'karta w tle'; hide(); return; }
@@ -293,7 +336,7 @@
         if (!d) { why = 'brak kwestii do czytania (brak napisów / lektor milczy)'; hide(); return; }
         if (!v || !v.isConnected) { why = 'wideo zniknęło ze strony'; hide(); return; }
         if (!isFinite(v.duration) || v.duration <= 0) { why = 'film bez znanego czasu (reklama, transmisja na żywo, jeszcze się nie wczytał)'; hide(); return; }
-        var r = v.getBoundingClientRect();
+        var r = visibleRect(v);
         if (r.width < 120 || r.height < 60) { why = 'obraz filmu za mały (' + Math.round(r.width) + '×' + Math.round(r.height) + ' px)'; hide(); return; }
         // [FIX 2026-11-16] pełny ekran na samym <video>: przeglądarka nie rysuje na nim żadnych nakładek
         var fe = document.fullscreenElement;
@@ -391,7 +434,7 @@
         // [FIX 2026-11-22] obie etykiety obok siebie: prawa nie wchodzi na lewą
         if (src && !narrow) lbl.style.maxWidth = 'calc(55% - 8px)'; else lbl.style.maxWidth = 'calc(100% - 8px)';
     }
-    setInterval(tick, 500);
+    var tickTimer = setInterval(tick, 500);
 
     // [FIX 2026-11-16] diagnostyka: w konsoli strony `__lektorBarStatus()` mówi, dlaczego paska nie ma
     // (opcja, karta w tle, brak listy kwestii, czas filmu, za mały obraz), a `__lektorBarSnap()` — co widzi popup.

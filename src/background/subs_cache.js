@@ -31,8 +31,14 @@ const txDone = (tx) => new Promise((resolve, reject) => { tx.oncomplete = () => 
 const textKey = (t) => 'pl|' + String(t || '').replace(/\s+/g, ' ').trim();
 const fresh = (rec) => rec && Date.now() - (rec.ts || 0) < TTL_MS;
 
+// [AGENT-EXP] 2026-11-26: przełącznik w Ustawieniach (🧠 Pamięć napisów) — wyłączony = nic nie czytamy ani nie zapisujemy
+async function memOn() {
+    try { const r = await chrome.storage.local.get('pamiecNapisowOn'); return r.pamiecNapisowOn !== false; } catch (e) { return true; }
+}
+
 // ---- całe napisy odcinka ----
 async function cacheGetVideo(key) {
+    if (!(await memOn())) return null;
     const d = await db();
     const tx = d.transaction('videos', 'readwrite');
     const st = tx.objectStore('videos');
@@ -46,6 +52,7 @@ async function cacheGetVideo(key) {
 }
 async function cachePutVideo(key, data) {
     if (!key || !data || !Array.isArray(data.cues) || !data.cues.length) return;
+    if (!(await memOn())) return;
     const d = await db();
     const tx = d.transaction('videos', 'readwrite');
     tx.objectStore('videos').put({
@@ -57,12 +64,18 @@ async function cachePutVideo(key, data) {
     await txDone(tx);
     cacheMaybeCleanup();
 }
+async function cacheDelVideo(key) {   // [AGENT-EXP] 2026-11-26: 🔄 Odśwież napisy (popup, karta Status)
+    const d = await db();
+    const tx = d.transaction('videos', 'readwrite');
+    tx.objectStore('videos').delete(String(key));
+    await txDone(tx);
+}
 
 // ---- pojedyncze tłumaczenia ----
 // Zwraca tablicę tłumaczeń (albo undefined dla brakujących), w kolejności `texts`.
 async function cacheGetTexts(texts) {
     const out = new Array(texts.length);
-    if (!texts.length) return out;
+    if (!texts.length || !(await memOn())) return out;
     const d = await db();
     const tx = d.transaction('texts', 'readwrite');
     const st = tx.objectStore('texts');
@@ -79,7 +92,7 @@ async function cacheGetTexts(texts) {
 }
 async function cachePutTexts(pairs) {
     const ok = (pairs || []).filter((p) => p && p[0] && p[1]);
-    if (!ok.length) return;
+    if (!ok.length || !(await memOn())) return;
     const d = await db();
     const tx = d.transaction('texts', 'readwrite');
     const st = tx.objectStore('texts');
@@ -135,4 +148,4 @@ async function cacheClear() {
 // Sprzątanie przy starcie service workera
 cacheMaybeCleanup();
 
-export { cacheGetVideo, cachePutVideo, cacheGetTexts, cachePutTexts, cacheStats, cacheClear };
+export { cacheGetVideo, cachePutVideo, cacheDelVideo, cacheGetTexts, cachePutTexts, cacheStats, cacheClear };
